@@ -28,7 +28,24 @@ public struct SessionFinalizer: Sendable {
     ///  endedAt estimate for a crashed session = startedAt + max track (offset + duration); live stop uses `now`.
     public func run(_ ref: SessionRef, reason: EndReason, clockDiagnostics: PerTrack<ClockDiagnostics> = .init(),
                     endedAt: Date? = nil) async throws {
-        fatalError("not implemented")
+        _ = try await store.meta(of: ref)
+        let facts: FinalizedAudio
+        do { facts = try await audio.finalize(ref.folder, clockTolerance: 0.1) }
+        catch { throw FinalizeError.encodeFailed(String(describing: error)) }
+        let updated = try await store.update(ref) { meta in
+            for (track, _) in meta.tracks.present {
+                meta.tracks[track]?.audio = facts.tracks[track]
+                meta.tracks[track]?.diagnostics = clockDiagnostics[track]
+                if facts.tracks[track] == nil, meta.tracks[track]?.failure == nil {
+                    meta.tracks[track]?.failure = .init(code: .noAudioEver, message: "No audio was recorded")
+                }
+            }
+            if meta.capture == .inProgress {
+                let end = endedAt ?? meta.startedAt.addingTimeInterval(SessionTimeline.duration(of: meta))
+                meta.capture = .finished(endedAt: end, reason: reason)
+            }
+        }
+        guard updated.tracks.present.contains(where: { $0.1.audio != nil }) else { throw FinalizeError.nothingRecorded }
     }
 }
 
@@ -44,6 +61,24 @@ public enum LaunchRecovery {
     /// untouched and reported. Returns the sessions recovered, for a one-time "前回の録音を回復しました" notice.
     /// Correctness does not depend on single-instance enforcement.
     public static func run(store: SessionStore, finalizer: SessionFinalizer) async throws -> [SessionRef] {
-        []
+        var recovered: [SessionRef] = []
+        for listing in try await store.list() {
+            guard listing.state == .needsFinalize,
+                  let lease = CaptureLease.acquire(listing.ref.folder.lock) else { continue }
+            defer { lease.release() }
+            do {
+                try await finalizer.run(listing.ref, reason: .recovered)
+                recovered.append(listing.ref)
+            } catch FinalizeError.nothingRecorded {
+                // discardIfEmpty independently refuses every remaining audio artifact.
+                do { try await store.discardIfEmpty(listing.ref) }
+                catch { logFailure() }
+            } catch { logFailure() }
+        }
+        return recovered
+    }
+
+    private static func logFailure() {
+        FileHandle.standardError.write(Data("Session recovery failed; preserved for a later retry\n".utf8))
     }
 }
