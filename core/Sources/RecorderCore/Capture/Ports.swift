@@ -35,7 +35,14 @@ public enum MicResolution: Sendable, Equatable {
 
     /// Pure. Match by UID only (names are not unique and change with firmware/localization).
     public static func resolve(_ preference: MicPreference?, available: [InputDeviceInfo]) -> MicResolution {
-        fatalError("not implemented")
+        guard let preference else { return .notChosen }
+        guard let device = available.first(where: { $0.uid == preference.deviceUID }) else {
+            return .deviceMissing(preference)
+        }
+        if let channel = preference.channel, channel < 1 || channel > device.inputChannels {
+            return .channelOutOfRange(device: device, requested: channel)
+        }
+        return .use(device: device, channel: preference.channel)
     }
 }
 

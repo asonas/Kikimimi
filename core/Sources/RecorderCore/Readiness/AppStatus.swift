@@ -24,7 +24,10 @@ public enum AppStatus: Sendable, Equatable {
                case let .running(f) = running.state {
                 return .transcribing(fraction: f, queued: jobs.count { $0.state == .queued })
             }
-            // TODO: failed job => .needsAttention("文字起こしに失敗"); !readiness.canRecord => .needsAttention("セットアップが必要")
+            if jobs.contains(where: { if case .failed = $0.state { true } else { false } }) {
+                return .needsAttention("文字起こしに失敗")
+            }
+            if !readiness.canRecord { return .needsAttention("セットアップが必要") }
             return .idle
         }
     }

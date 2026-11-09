@@ -42,6 +42,7 @@ public enum ReadinessBlocker: Sendable, Equatable {
     case microphonePermission(MicAccess)
     case micNotChosen
     case micMissing(MicPreference)
+    case micChannelOutOfRange(MicPreference, deviceChannels: Int)
 }
 
 /// What the menu shows before an interview. Derived from inputs; nothing here is stored.
@@ -52,7 +53,20 @@ public struct Readiness: Sendable, Equatable {
     public var model: ModelStatus
 
     /// Blocks *recording*. The model never blocks recording (audio is safe; transcription waits for the model).
-    public var blockers: [ReadinessBlocker] { fatalError("not implemented") }
+    public var blockers: [ReadinessBlocker] {
+        var result: [ReadinessBlocker] = []
+        if screen != .ready { result.append(.screenCapture(screen)) }
+        if mic != .authorized { result.append(.microphonePermission(mic)) }
+        switch micDevice {
+        case .notChosen: result.append(.micNotChosen)
+        case .deviceMissing(let preference): result.append(.micMissing(preference))
+        case let .channelOutOfRange(device, requested):
+            let preference = MicPreference(deviceUID: device.uid, deviceName: device.name, channel: requested)
+            result.append(.micChannelOutOfRange(preference, deviceChannels: device.inputChannels))
+        case .use: break
+        }
+        return result
+    }
     public var canRecord: Bool { blockers.isEmpty }
 }
 
