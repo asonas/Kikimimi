@@ -21,6 +21,11 @@ final class AppEnvironment {
     /// Derived, never stored.
     var status: AppStatus { AppStatus.derive(phase: recorder.phase, jobs: transcription.jobs, readiness: readiness.readiness) }
 
+    func inputDevices() throws -> [InputDeviceInfo] { try LiveAudio.devices().inputDevices() }
+    func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<Float, any Error> {
+        try await LiveAudio.microphoneLevels(device: device, channel: channel)
+    }
+
     static func live() -> AppEnvironment {
         _ = AppDelegate.launchMode
         let settings = SettingsStore()

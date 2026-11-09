@@ -5,6 +5,9 @@ import RecorderCore
 struct SetupView: View {
     let env: AppEnvironment
     @Environment(\.scenePhase) private var scenePhase
+    @State private var devices: [InputDeviceInfo] = []
+    @State private var inputError: String?
+    @State private var peak: Float = -120
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -30,7 +33,7 @@ struct SetupView: View {
                     case .authorized: EmptyView()
                     }
                 }
-                row("マイク入力", detail: "入力デバイスの選択は今後追加します", ready: false) { EmptyView() }
+                microphoneInput
                 row("書き起こしモデル", detail: "未インストール。録音は可能です", ready: false) { EmptyView() }
             }
         }
@@ -40,9 +43,22 @@ struct SetupView: View {
             await env.launched.value
             while !Task.isCancelled {
                 await env.readiness.refresh()
+                refreshDevices()
                 logRows()
                 do { try await Task.sleep(for: .seconds(1)) } catch { break }
             }
+        }
+        .task(id: previewKey) {
+            peak = -120
+            guard scenePhase == .active, !env.recorder.phase.isCapturing,
+                  env.readiness.readiness.mic == .authorized,
+                  let choice = env.settings.settings.mic,
+                  let device = devices.first(where: { $0.uid == choice.deviceUID }) else { return }
+            do {
+                let levels = try await env.microphoneLevels(device: device, channel: choice.channel)
+                for try await value in levels { peak = value }
+            } catch is CancellationError { }
+            catch { if !Task.isCancelled { inputError = "入力の確認に失敗しました: \(error.localizedDescription)" } }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await env.readiness.refresh() } }
@@ -50,6 +66,67 @@ struct SetupView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await env.readiness.refresh() }
         }
+    }
+
+    private var previewKey: String {
+        "\(env.settings.settings.mic?.deviceUID ?? "")/\(env.settings.settings.mic?.channel ?? 0)/\(scenePhase)/\(env.recorder.phase.isCapturing)/\(env.readiness.readiness.mic)/\(devices)"
+    }
+
+    private var microphoneInput: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("マイク入力").font(.headline)
+            Picker("デバイス", selection: Binding(get: { env.settings.settings.mic?.deviceUID ?? "" }, set: { uid in
+                inputError = nil
+                env.settings.settings.mic = devices.first(where: { $0.uid == uid }).map {
+                    MicPreference(deviceUID: $0.uid, deviceName: $0.name, channel: nil)
+                }
+                Task { await env.readiness.refresh() }
+            })) {
+                Text("選択してください").tag("")
+                if let choice = env.settings.settings.mic, !devices.contains(where: { $0.uid == choice.deviceUID }) {
+                    Text("\(choice.deviceName)（未接続）").tag(choice.deviceUID)
+                }
+                ForEach(devices, id: \.uid) { Text($0.name).tag($0.uid) }
+            }
+            if let choice = env.settings.settings.mic {
+                Text("UID: \(choice.deviceUID)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                if let device = devices.first(where: { $0.uid == choice.deviceUID }) {
+                    Picker("チャンネル", selection: Binding(get: { choice.channel ?? 0 }, set: { value in
+                        inputError = nil
+                        env.settings.settings.mic?.channel = value == 0 ? nil : value
+                        Task { await env.readiness.refresh() }
+                    })) {
+                        Text("全チャンネル（ミックス）").tag(0)
+                        ForEach(1...device.inputChannels, id: \.self) { Text("INPUT \($0)").tag($0) }
+                    }
+                }
+                HStack {
+                    ProgressView(value: Double(min(1, max(0, (peak + 75) / 75))))
+                        .accessibilityLabel("マイク入力レベル")
+                    Text(String(format: "%.0f dBFS", peak)).font(.caption.monospacedDigit()).frame(width: 76)
+                }
+                Text(env.recorder.phase.isCapturing ? "録音中は入力の確認を停止しています" : "話してメーターが動くことを確認してください")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("使用する入力を選んでください。自動では選択しません").font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let inputError { Text(inputError).font(.caption).foregroundStyle(.red) }
+        }
+        .disabled(env.recorder.phase.isCapturing)
+    }
+
+    private func refreshDevices() {
+        do {
+            let next = try env.inputDevices()
+            if next != devices {
+                devices = next
+                #if DEBUG
+                for device in next {
+                    FileHandle.standardError.write(Data("SETUP inputDevice=\(device.name) uid=\(device.uid) channels=\(device.inputChannels)\n".utf8))
+                }
+                #endif
+            }
+        } catch { inputError = "入力デバイスを取得できませんでした: \(error.localizedDescription)" }
     }
 
     private func row<Actions: View>(_ title: String, detail: String, ready: Bool,
@@ -92,7 +169,7 @@ struct SetupView: View {
         #if DEBUG
         let screen = env.readiness.readiness.screen
         let mic = env.readiness.readiness.mic
-        FileHandle.standardError.write(Data("SETUP screen=\(screen) microphone=\(mic) input=notChosen model=notInstalled\n".utf8))
+        FileHandle.standardError.write(Data("SETUP screen=\(screen) microphone=\(mic) input=\(env.readiness.readiness.micDevice) model=notInstalled\n".utf8))
         #endif
     }
 }

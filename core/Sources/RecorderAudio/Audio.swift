@@ -35,10 +35,83 @@ final class RemoteAppSource: AudioSource {
 /// AVAudioEngine input with kAudioOutputUnitProperty_CurrentDevice set from the device UID; format from inputFormat(forBus: 0);
 /// extracts one channel without downmix (Phase 0 `extractChannel`). Observes AVAudioEngineConfigurationChange:
 /// a change in device/sample rate finishes the stream with an error => track failure (.deviceLost / .formatChanged), no auto-restart in Phase 1.
-final class MicSource: AudioSource {
-    init(device: InputDeviceInfo, channel: Int?) {}
-    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> { fatalError("not implemented") }
-    func stop() async { fatalError("not implemented") }
+actor MicSource: AudioSource {
+    private let device: InputDeviceInfo
+    private let channel: Int?
+    private var engine: AVAudioEngine?
+    private var observer: (any NSObjectProtocol)?
+    private var continuation: AsyncThrowingStream<AudioChunk, any Error>.Continuation?
+    private var stopped = false
+    init(device: InputDeviceInfo, channel: Int?) { self.device = device; self.channel = channel }
+    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> {
+        guard !stopped, engine == nil else { throw CancellationError() }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            throw AudioSourceFailure(code: .streamStopped, message: "Microphone permission is not granted")
+        }
+        guard let hardware = try hardwareInputs().first(where: { $0.info.uid == device.uid }) else {
+            throw AudioSourceFailure(code: .deviceLost, message: "Selected microphone is not connected")
+        }
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        guard let unit = input.audioUnit else { throw AudioSourceFailure(code: .deviceLost, message: "Microphone AudioUnit unavailable") }
+        var id = hardware.id
+        let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                          &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard status == noErr else { throw AudioSourceFailure(code: .deviceLost, message: "Cannot select microphone: \(status)") }
+        var actual = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &actual, &size) == noErr,
+              actual == id else { throw AudioSourceFailure(code: .deviceLost, message: "Selected microphone is not active") }
+        let format = input.inputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0,
+              channel == nil || (channel! > 0 && channel! <= Int(format.channelCount)) else {
+            throw AudioSourceFailure(code: .formatChanged, message: "Selected microphone channel is unavailable")
+        }
+        let pair = AsyncThrowingStream<AudioChunk, any Error>.makeStream()
+        let channel = channel
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
+            guard time.isHostTimeValid else { pair.continuation.finish(throwing: AudioSourceFailure(code: .streamStopped, message: "Invalid microphone host time")); return }
+            do {
+                let samples = try monoSamples(buffer, channel: channel)
+                pair.continuation.yield(.init(hostSeconds: AVAudioTime.seconds(forHostTime: time.hostTime),
+                                               sampleRate: buffer.format.sampleRate, samples: samples))
+            } catch { pair.continuation.finish(throwing: error) }
+        }
+        do { try engine.start() }
+        catch { input.removeTap(onBus: 0); throw error }
+        self.engine = engine; continuation = pair.continuation
+        let uid = device.uid
+        observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { _ in
+            let present = (try? hardwareInputs().contains { $0.info.uid == uid }) == true
+            pair.continuation.finish(throwing: AudioSourceFailure(code: present ? .formatChanged : .deviceLost,
+                                                                  message: "Microphone configuration changed"))
+        }
+        pair.continuation.onTermination = { [weak self] _ in Task { await self?.stop() } }
+        return pair.stream
+    }
+    func stop() async {
+        stopped = true
+        if let observer { NotificationCenter.default.removeObserver(observer); self.observer = nil }
+        if let engine { engine.stop(); engine.inputNode.removeTap(onBus: 0); self.engine = nil }
+        continuation?.finish(); continuation = nil
+    }
+}
+
+struct AudioSourceFailure: Error, Sendable {
+    let code: TrackFailure.Code
+    let message: String
+}
+
+func monoSamples(_ buffer: AVAudioPCMBuffer, channel: Int?) throws -> [Float] {
+    guard buffer.format.commonFormat == .pcmFormatFloat32, let data = buffer.floatChannelData,
+          buffer.format.channelCount > 0, channel == nil || (channel! > 0 && channel! <= Int(buffer.format.channelCount)) else {
+        throw AudioSourceFailure(code: .formatChanged, message: "Invalid input channel or PCM format")
+    }
+    let channels = Int(buffer.format.channelCount)
+    return (0..<Int(buffer.frameLength)).map { frame in
+        func sample(_ c: Int) -> Float { buffer.format.isInterleaved ? data[0][frame * channels + c] : data[c][frame] }
+        if let channel { return sample(channel - 1) }
+        return (0..<channels).reduce(Float(0)) { $0 + sample($1) } / Float(channels)
+    }
 }
 
 /// Consumes one source for one track: write-ahead hook on the first chunk, digital-silence check, TrackClock placement,
@@ -131,7 +204,8 @@ actor TrackRecorder {
                 failureCode = .streamStopped
             }
         } catch {
-            failure = TrackFailure(code: failureCode, message: String(describing: error),
+            let sourceError = error as? AudioSourceFailure
+            failure = TrackFailure(code: sourceError?.code ?? failureCode, message: sourceError?.message ?? String(describing: error),
                                    atSeconds: clock.map { Double($0.framesPlaced) / $0.sampleRate })
         }
         if let writer = consume spool { writer.close() }
@@ -315,7 +389,71 @@ struct AACFinalizer: AudioFinalizer {
 
 /// Phase 0 `inputDevices()` behind the port: AudioObject enumeration with input stream config, name, UID, default flag.
 struct CoreAudioInputDevices: InputDeviceCatalog {
-    func inputDevices() throws -> [InputDeviceInfo] { [] } // Replaced by the device-catalog implementation commit.
+    func inputDevices() throws -> [InputDeviceInfo] { try hardwareInputs().map(\.info) }
+}
+
+private struct HardwareInput {
+    let id: AudioDeviceID
+    let info: InputDeviceInfo
+}
+
+private func hardwareInputs() throws -> [HardwareInput] {
+    func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, into value: inout T) throws {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                                mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<T>.size)
+        let status = withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0) }
+        guard status == noErr else { throw AudioSourceFailure(code: .deviceLost, message: "Cannot read input device: \(status)") }
+    }
+    var defaultID = AudioDeviceID(0)
+    try read(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, into: &defaultID)
+    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    var status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
+    guard status == noErr else { throw AudioSourceFailure(code: .deviceLost, message: "Cannot enumerate input devices") }
+    var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+    guard !ids.isEmpty else { return [] }
+    status = ids.withUnsafeMutableBytes { AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, $0.baseAddress!) }
+    guard status == noErr else { throw AudioSourceFailure(code: .deviceLost, message: "Cannot enumerate input devices") }
+    var devices: [HardwareInput] = []
+    for id in ids {
+        var config = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var bytes: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &config, 0, nil, &bytes) == noErr, bytes > 0 else { continue }
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: Int(bytes), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { storage.deallocate() }
+        guard AudioObjectGetPropertyData(id, &config, 0, nil, &bytes, storage) == noErr else { continue }
+        let channels = UnsafeMutableAudioBufferListPointer(storage.assumingMemoryBound(to: AudioBufferList.self)).reduce(0) { $0 + Int($1.mNumberChannels) }
+        guard channels > 0 else { continue }
+        var name: CFString = "" as CFString, uid: CFString = "" as CFString
+        try read(id, kAudioObjectPropertyName, into: &name)
+        try read(id, kAudioDevicePropertyDeviceUID, into: &uid)
+        devices.append(.init(id: id, info: .init(uid: uid as String, name: name as String,
+                                               inputChannels: channels, isSystemDefault: id == defaultID)))
+    }
+    return devices.sorted { ($0.info.name, $0.info.uid) < ($1.info.name, $1.info.uid) }
+}
+
+private actor MicrophonePreview {
+    static let shared = MicrophonePreview()
+    private var source: MicSource?
+    private var id: UUID?
+    func start(device: InputDeviceInfo, channel: Int?) async throws -> (UUID, AsyncThrowingStream<AudioChunk, any Error>) {
+        await stop()
+        let source = MicSource(device: device, channel: channel), id = UUID()
+        self.source = source; self.id = id
+        let stream = try await source.start()
+        guard self.id == id else { await source.stop(); throw CancellationError() }
+        return (id, stream)
+    }
+    func stop(id: UUID? = nil) async {
+        if let id, self.id != id { return }
+        let source = source
+        self.source = nil; self.id = nil
+        await source?.stop()
+    }
 }
 
 /// CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess / AVCaptureDevice mic status / SCShareableContent probe.
@@ -350,6 +488,26 @@ struct TwoTrackCapture: CaptureBackend {
 // MARK: - The only public surface of RecorderAudio (composition root uses these)
 
 public enum LiveAudio {
+    public static func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<Float, any Error> {
+        let (id, chunks) = try await MicrophonePreview.shared.start(device: device, channel: channel)
+        if Task.isCancelled { await MicrophonePreview.shared.stop(id: id); throw CancellationError() }
+        let pair = AsyncThrowingStream<Float, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let task = Task {
+            do {
+                for try await chunk in chunks {
+                    let peak = chunk.samples.reduce(Float(0)) { max($0, abs($1)) }
+                    pair.continuation.yield(peak > 0 ? 20 * log10(peak) : -120)
+                }
+                pair.continuation.finish()
+            } catch { pair.continuation.finish(throwing: error) }
+            await MicrophonePreview.shared.stop(id: id)
+        }
+        pair.continuation.onTermination = { _ in
+            task.cancel()
+            Task { await MicrophonePreview.shared.stop(id: id) }
+        }
+        return pair.stream
+    }
     public static func backend() -> any CaptureBackend { TwoTrackCapture() }
     public static func finalizer() -> any AudioFinalizer { AACFinalizer() }
     public static func devices() -> any InputDeviceCatalog { CoreAudioInputDevices() }
