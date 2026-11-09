@@ -1,0 +1,60 @@
+# <repo>/mise.toml  (layout follows YoruMimizuku's mise.toml: [tools], [env], one task per verb, build depends on generate)
+# Extra arguments are appended to the LAST line of a task's run script (checked with mise 2026.11.2: `$@` is empty inside
+# the script, and a leading `--` is consumed by mise). So the line that should receive them is always the last one:
+#   mise run test --filter RecorderCoreTests
+#   IR_INTEGRATION=1 mise run test --filter RecorderWhisperTests
+#   mise run app --headless record --seconds 30 --company smoke --target com.google.Chrome
+[tools]
+xcodegen = "latest"
+
+[env]
+# The active developer dir on this machine is CommandLineTools; swift test (Swift Testing) and xcodebuild need Xcode.
+DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer"
+SCHEME = "InterviewRecorder"
+APP_NAME = "InterviewRecorder"
+PROJECT = "InterviewRecorder.xcodeproj"
+TEAM_ID = "QYP65434UW"
+BUILD_DIR = "build"
+# One stable path for the Debug product, so Launch Services and TCC see one app for the bundle ID.
+APP_PATH = "build/development/Build/Products/Debug/InterviewRecorder.app"
+
+[tasks.generate]
+description = "Generate the Xcode project from project.yml"
+run = "xcodegen generate"
+
+[tasks.test]
+description = "Run every test in core/ (no signing, no TCC; RecorderWhisper's model test is gated by IR_INTEGRATION=1)"
+run = "swift test --package-path core"
+
+[tasks.build]
+description = "Build the Debug app with an Apple Development signature and print its designated requirement"
+depends = ["generate"]
+run = """
+set -euo pipefail
+xcodebuild build \
+  -scheme "$SCHEME" \
+  -project "$PROJECT" \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath "$BUILD_DIR/development" \
+  CODE_SIGNING_ALLOWED=YES \
+  DEVELOPMENT_TEAM="$TEAM_ID" \
+  CODE_SIGN_IDENTITY='Apple Development'
+codesign --verify --deep --strict "$APP_PATH"
+codesign -d -r- "$APP_PATH"
+"""
+
+# Launches through LaunchServices (`open -n`), never the binary, so TCC judges the app and not the terminal.
+# -W waits for the app to exit; its stdout/stderr go to build/logs. `open` does not return the app's exit status:
+# in headless mode the last stderr line ("HEADLESS OK ..." / "HEADLESS FAILED: ...") is the result.
+# Arguments given to `mise run app` are appended after `--args` (last line).
+[tasks.app]
+description = "Launch the built Debug app through LaunchServices; extra arguments go to the app"
+run = """
+set -euo pipefail
+mkdir -p "$BUILD_DIR/logs"
+log="$PWD/$BUILD_DIR/logs/$(date +%Y%m%d-%H%M%S)-$$"
+echo "stdout: $log.stdout.log"; echo "stderr: $log.stderr.log"
+trap 'tail -n 20 "$log.stderr.log" 2>/dev/null || true' EXIT     # show the result line once the app has exited
+open -n -W --stdout "$log.stdout.log" --stderr "$log.stderr.log" "$PWD/$APP_PATH" --args
+"""

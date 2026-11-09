@@ -1,0 +1,75 @@
+# <repo>/project.yml  (XcodeGen; InterviewRecorder.xcodeproj is generated and gitignored, like yohaku)
+# Validated with xcodegen 2.46.0 during design (project generated, WhisperKit 1.1.1 resolved through the local package).
+# Conventions copied from yohaku / YoruMimizuku: team QYP65434UW, Automatic signing, local package by path,
+# `info:` + `entitlements:` generated from here.
+name: InterviewRecorder
+options:
+  bundleIdPrefix: as.ason
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  RecorderKit:
+    path: core                       # WhisperKit is resolved through core/Package.swift; this file never mentions it
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    DEVELOPMENT_TEAM: QYP65434UW
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: Apple Development
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    # Deliberately NOT copying yohaku's SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor. UI types say @MainActor explicitly,
+    # so nothing in this target is main-actor by accident.
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  InterviewRecorder:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - package: RecorderKit
+        product: RecorderCore
+      - package: RecorderKit
+        product: RecorderAudio
+      - package: RecorderKit
+        product: RecorderWhisper
+    settings:
+      base:
+        # ONE bundle ID for Debug and Release (unlike yohaku's .dev split): TCC grants are per bundle ID + signature,
+        # the Phase 0 grants already exist for as.ason.InterviewRecorder, and a second identity would mean a second
+        # row in System Settings and a re-grant.
+        PRODUCT_BUNDLE_IDENTIFIER: as.ason.InterviewRecorder
+        PRODUCT_NAME: InterviewRecorder
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_APP_SANDBOX: NO
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: InterviewRecorder
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+        # No LSMultipleInstancesProhibited: Relaunch and the DEBUG headless mode both start a second instance with `open -n`
+        # on purpose. The AppDelegate's single-instance nicety skips those launch modes; recovery safety comes from the
+        # per-session flock lease, not from instance counting.
+        NSMicrophoneUsageDescription: 面接の音声を、相手側の音声とは別トラックで録音するためにマイクを使用します。
+    entitlements:
+      path: App/InterviewRecorder.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+schemes:
+  InterviewRecorder:
+    build:
+      targets:
+        InterviewRecorder: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+# No app-level test target in Phase 1: the app target is SwiftUI + the composition root. All tests are `swift test` in core/
+# (`mise run test`). App/HeadlessRunner.swift is gated by `#if DEBUG`; XcodeGen's `debug` config preset is recalled (not
+# verified) to set SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG. The headless commit checks it (`xcodebuild -showBuildSettings`).
