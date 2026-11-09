@@ -22,6 +22,7 @@ final class AppEnvironment {
     var status: AppStatus { AppStatus.derive(phase: recorder.phase, jobs: transcription.jobs, readiness: readiness.readiness) }
 
     func inputDevices() throws -> [InputDeviceInfo] { try LiveAudio.devices().inputDevices() }
+    func remoteCandidates() async throws -> [RemoteSource] { try await LiveAudio.backend().runningRemoteCandidates() }
     func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<Float, any Error> {
         try await LiveAudio.microphoneLevels(device: device, channel: channel)
     }

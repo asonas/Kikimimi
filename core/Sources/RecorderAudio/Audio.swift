@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import CoreAudio
 import Foundation
 import RecorderCore
@@ -26,10 +27,84 @@ protocol AudioSource: Sendable {
 
 /// SCStream audio-only, per app (SCContentFilter(display:including:[apps])) or all-system minus this process.
 /// Config proven in Phase 0: capturesAudio, excludesCurrentProcessAudio, 48 kHz, 1 channel, 2x2 @ 1 fps, only `.audio` output.
-final class RemoteAppSource: AudioSource {
-    init(_ source: RemoteSource) {}
-    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> { fatalError("not implemented") }
-    func stop() async { fatalError("not implemented") }
+actor RemoteAppSource: AudioSource {
+    private let source: RemoteSource
+    private var stream: SCStream?
+    private var output: RemoteOutput?
+    private var continuation: AsyncThrowingStream<AudioChunk, any Error>.Continuation?
+    private var stopped = false
+    private var appObserver: (any NSObjectProtocol)?
+    init(_ source: RemoteSource) { self.source = source }
+    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> {
+        guard !stopped, stream == nil else { throw CancellationError() }
+        guard CGPreflightScreenCaptureAccess() else { throw AudioSourceFailure(code: .streamStopped, message: "Screen capture permission is not granted") }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        guard !stopped else { throw CancellationError() }
+        guard let display = content.displays.first else { throw AudioSourceFailure(code: .streamStopped, message: "No display available") }
+        let filter: SCContentFilter
+        switch source {
+        case .app(let id, _):
+            let apps = content.applications.filter { $0.bundleIdentifier == id }
+            guard !apps.isEmpty else { throw AudioSourceFailure(code: .targetAppQuit, message: "Target application is not running") }
+            filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
+        case .allSystemAudio:
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        }
+        let configuration = SCStreamConfiguration()
+        configuration.capturesAudio = true; configuration.excludesCurrentProcessAudio = true
+        configuration.sampleRate = 48_000; configuration.channelCount = 1
+        configuration.width = 2; configuration.height = 2
+        configuration.minimumFrameInterval = CMTime(seconds: 1, preferredTimescale: 600)
+        let pair = AsyncThrowingStream<AudioChunk, any Error>.makeStream()
+        let output = RemoteOutput(continuation: pair.continuation)
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
+        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: DispatchQueue(label: "recorder.remote"))
+        do { try await stream.startCapture() }
+        catch { pair.continuation.finish(throwing: error); throw error }
+        guard !stopped else { try? await stream.stopCapture(); throw CancellationError() }
+        self.stream = stream; self.output = output; continuation = pair.continuation
+        if case .app(let id, _) = source {
+            appObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
+                object: nil, queue: nil) { notification in
+                    if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                       app.bundleIdentifier == id {
+                        pair.continuation.finish(throwing: AudioSourceFailure(code: .targetAppQuit, message: "Target application quit"))
+                    }
+                }
+        }
+        pair.continuation.onTermination = { [weak self] _ in Task { await self?.stop() } }
+        return pair.stream
+    }
+    func stop() async {
+        stopped = true
+        if let appObserver { NSWorkspace.shared.notificationCenter.removeObserver(appObserver); self.appObserver = nil }
+        let stream = stream; self.stream = nil
+        if let stream { try? await stream.stopCapture() }
+        continuation?.finish(); continuation = nil; output = nil
+    }
+}
+
+private final class RemoteOutput: NSObject, SCStreamOutput, SCStreamDelegate, Sendable {
+    let continuation: AsyncThrowingStream<AudioChunk, any Error>.Continuation
+    init(continuation: AsyncThrowingStream<AudioChunk, any Error>.Continuation) { self.continuation = continuation }
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        continuation.finish(throwing: AudioSourceFailure(code: .streamStopped, message: error.localizedDescription))
+    }
+    func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .audio, sample.isValid, CMSampleBufferDataIsReady(sample),
+              let description = sample.formatDescription else { return }
+        let format = AVAudioFormat(cmAudioFormatDescription: description)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.numSamples)) else { return }
+        buffer.frameLength = buffer.frameCapacity
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0, frameCount: Int32(sample.numSamples), into: buffer.mutableAudioBufferList)
+        guard status == noErr, let clock = stream.synchronizationClock else {
+            continuation.finish(throwing: AudioSourceFailure(code: .streamStopped, message: "Cannot copy remote audio or read its host clock")); return
+        }
+        let time = CMSyncConvertTime(sample.presentationTimeStamp, from: clock, to: CMClockGetHostTimeClock())
+        guard time.isNumeric else { continuation.finish(throwing: AudioSourceFailure(code: .streamStopped, message: "Invalid remote host time")); return }
+        do { continuation.yield(.init(hostSeconds: time.seconds, sampleRate: format.sampleRate, samples: try monoSamples(buffer, channel: nil))) }
+        catch { continuation.finish(throwing: error) }
+    }
 }
 
 /// AVAudioEngine input with kAudioOutputUnitProperty_CurrentDevice set from the device UID; format from inputFormat(forBus: 0);
@@ -141,7 +216,12 @@ actor TrackRecorder {
     }
 
     func run() async {
-        if let task { _ = await task.value; return }
+        begin()
+        _ = await task?.value
+    }
+
+    func begin() {
+        guard task == nil else { return }
         guard !stopped else { return }
         let work = Task {
             let diagnostics = await consume()
@@ -149,7 +229,6 @@ actor TrackRecorder {
             return diagnostics
         }
         task = work
-        _ = await work.value
     }
 
     func stop() async -> ClockDiagnostics? {
@@ -440,12 +519,22 @@ private actor MicrophonePreview {
     static let shared = MicrophonePreview()
     private var source: MicSource?
     private var id: UUID?
-    func start(device: InputDeviceInfo, channel: Int?) async throws -> (UUID, AsyncThrowingStream<AudioChunk, any Error>) {
+    private var recordingActive = false
+    func beginCapture() async {
+        recordingActive = true
         await stop()
+    }
+    func endCapture() { recordingActive = false }
+    func start(device: InputDeviceInfo, channel: Int?) async throws -> (UUID, AsyncThrowingStream<AudioChunk, any Error>) {
+        try Task.checkCancellation()
+        guard !recordingActive else { throw CancellationError() }
+        await stop()
+        try Task.checkCancellation()
+        guard !recordingActive else { throw CancellationError() }
         let source = MicSource(device: device, channel: channel), id = UUID()
         self.source = source; self.id = id
         let stream = try await source.start()
-        guard self.id == id else { await source.stop(); throw CancellationError() }
+        guard self.id == id, !recordingActive, !Task.isCancelled else { await source.stop(); throw CancellationError() }
         return (id, stream)
     }
     func stop(id: UUID? = nil) async {
@@ -481,8 +570,87 @@ struct SystemPermissionProbe: PermissionProbe {
 /// Mic + remote, each through TrackRecorder. If one source throws on start, the other is stopped and the error propagates
 /// (no spool is left behind: spools are created lazily on the first chunk).
 struct TwoTrackCapture: CaptureBackend {
-    func start(_ plan: CapturePlan) async throws -> any RunningCapture { fatalError("not implemented") }
-    func runningRemoteCandidates() async throws -> [RemoteSource] { fatalError("not implemented") }
+    func start(_ plan: CapturePlan) async throws -> any RunningCapture {
+        await MicrophonePreview.shared.beginCapture()
+        do {
+            return try await start(plan, mic: MicSource(device: plan.mic.device, channel: plan.mic.channel), remote: RemoteAppSource(plan.remote))
+        } catch { await MicrophonePreview.shared.endCapture(); throw error }
+    }
+
+    func start(_ plan: CapturePlan, mic: any AudioSource, remote: any AudioSource) async throws -> any RunningCapture {
+        do {
+            let micStream = try await mic.start()
+            let remoteStream = try await remote.start()
+            let pair = AsyncStream<CaptureEvent>.makeStream()
+            let me = TrackRecorder(track: .me, source: StartedSource(source: mic, stream: micStream), folder: plan.folder,
+                                   willWriteFirstSample: plan.willWriteFirstSample, emit: { pair.continuation.yield($0) })
+            let other = TrackRecorder(track: .remote, source: StartedSource(source: remote, stream: remoteStream), folder: plan.folder,
+                                      willWriteFirstSample: plan.willWriteFirstSample, emit: { pair.continuation.yield($0) })
+            await me.begin(); await other.begin()
+            return TwoTrackRunning(events: pair.stream, continuation: pair.continuation, me: me, remote: other)
+        } catch {
+            await mic.stop(); await remote.stop()
+            throw error
+        }
+    }
+
+    func runningRemoteCandidates() async throws -> [RemoteSource] {
+        let apps: [RemoteSource] = await MainActor.run {
+            NSWorkspace.shared.runningApplications.compactMap {
+                guard $0.activationPolicy == .regular, let id = $0.bundleIdentifier,
+                      id != Bundle.main.bundleIdentifier else { return nil }
+                return .app(bundleID: id, name: $0.localizedName ?? id)
+            }
+        }
+        return Self.orderedCandidates(apps)
+    }
+
+    static func orderedCandidates(_ apps: [RemoteSource]) -> [RemoteSource] {
+        let priority = ["us.zoom.xos", "com.google.Chrome", "com.microsoft.teams2", "com.microsoft.teams",
+                        "com.cisco.webexmeetingsapp", "com.cisco.webexteams", "com.apple.FaceTime"]
+        var unique: [String: RemoteSource] = [:]
+        for case let .app(id, name) in apps { unique[id] = .app(bundleID: id, name: name) }
+        let sorted = unique.values.sorted {
+            guard case .app(let lhs, let lname) = $0, case .app(let rhs, let rname) = $1 else { return false }
+            let left = priority.firstIndex(of: lhs) ?? priority.count
+            let right = priority.firstIndex(of: rhs) ?? priority.count
+            if left != right { return left < right }
+            let comparison = lname.localizedCaseInsensitiveCompare(rname)
+            return comparison == .orderedSame ? lhs < rhs : comparison == .orderedAscending
+        }
+        return sorted + [.allSystemAudio]
+    }
+}
+
+private struct StartedSource: AudioSource {
+    let source: any AudioSource
+    let stream: AsyncThrowingStream<AudioChunk, any Error>
+    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> { stream }
+    func stop() async { await source.stop() }
+}
+
+private actor TwoTrackRunning: RunningCapture {
+    nonisolated let events: AsyncStream<CaptureEvent>
+    private let continuation: AsyncStream<CaptureEvent>.Continuation
+    private let me: TrackRecorder
+    private let remote: TrackRecorder
+    private var stopping: Task<PerTrack<ClockDiagnostics>, Never>?
+    init(events: AsyncStream<CaptureEvent>, continuation: AsyncStream<CaptureEvent>.Continuation, me: TrackRecorder, remote: TrackRecorder) {
+        self.events = events; self.continuation = continuation; self.me = me; self.remote = remote
+    }
+    func stop() async -> PerTrack<ClockDiagnostics> {
+        if let stopping { return await stopping.value }
+        let task = Task {
+            async let mine = me.stop()
+            async let theirs = remote.stop()
+            let diagnostics = await PerTrack(me: mine, remote: theirs)
+            continuation.finish()
+            await MicrophonePreview.shared.endCapture()
+            return diagnostics
+        }
+        stopping = task
+        return await task.value
+    }
 }
 
 // MARK: - The only public surface of RecorderAudio (composition root uses these)

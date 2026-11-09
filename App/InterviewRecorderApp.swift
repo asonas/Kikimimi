@@ -14,9 +14,11 @@ struct InterviewRecorderApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra { MenuView() } label: { LaunchIcon() }
+        MenuBarExtra { MenuView(env: env) } label: { LaunchIcon() }
             .menuBarExtraStyle(.window)
         Window("Setup", id: "setup") { SetupView(env: env) }
+            .windowResizability(.contentSize)
+        Window("新しい録音", id: "new-recording") { NewRecordingView(env: env) }
             .windowResizability(.contentSize)
     }
 }
@@ -75,10 +77,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private struct MenuView: View {
+    let env: AppEnvironment
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("InterviewRecorder").font(.headline)
+            switch env.recorder.phase {
+            case .idle:
+                Button("新しい録音") { openWindow(id: "new-recording"); NSApp.activate(ignoringOtherApps: true) }
+            case .preparing: Text("録音を準備しています")
+            case .recording(let recording):
+                HStack { Text("録音中"); Text(recording.startedAt, style: .timer).monospacedDigit() }
+                Button("録音を停止") { Task { await env.recorder.stop() } }
+            case .stopping: Text("録音を保存しています")
+            }
             Button("設定を開く") { openWindow(id: "setup"); NSApp.activate(ignoringOtherApps: true) }
             Button("終了") { NSApp.terminate(nil) }
         }
