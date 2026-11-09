@@ -12,7 +12,37 @@ enum FolderNamer {
     ///  - empty after sanitizing => "untitled"
     /// Collision: if `taken` contains the name, append "-2", "-3", ... (compare case-insensitively: APFS default).
     static func name(company: String, startedAt: Date, timeZone: TimeZone, taken: Set<String>) -> String {
-        fatalError("not implemented")
+        let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        var companyPart = ""
+        var inWhitespace = false
+        for character in company.precomposedStringWithCanonicalMapping {
+            // Cc controls are forbidden; format scalars such as emoji ZWJ must survive.
+            if character.unicodeScalars.contains(where: { forbidden.contains($0) || $0.properties.generalCategory == .control }) {
+                companyPart.append("-"); inWhitespace = false
+            } else if character.isWhitespace {
+                if !inWhitespace { companyPart.append("_") }
+                inWhitespace = true
+            } else {
+                companyPart.append(character); inWhitespace = false
+            }
+        }
+        let edges = CharacterSet(charactersIn: "-_.")
+        companyPart = String(companyPart.trimmingCharacters(in: edges).prefix(40))
+            .trimmingCharacters(in: edges)
+        if companyPart.isEmpty { companyPart = "untitled" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd_HHmm"
+        let base = formatter.string(from: startedAt) + "_" + companyPart
+        let occupied = Set(taken.map { $0.precomposedStringWithCanonicalMapping.lowercased() })
+        var candidate = base
+        var suffix = 2
+        while occupied.contains(candidate.lowercased()) {
+            candidate = base + "-\(suffix)"; suffix += 1
+        }
+        return candidate
     }
 }
 
@@ -85,7 +115,27 @@ enum SessionClassifier {
     ///  6. otherwise                                                 -> .readyToTranscribe
     /// "both spool and m4a exist" is .needsFinalize: the spool is deleted only after the m4a was renamed into place,
     /// so a surviving spool means the previous finalize did not finish; re-running it is idempotent.
-    static func classify(_ inventory: FolderInventory) -> SessionState { fatalError("not implemented") }
+    static func classify(_ inventory: FolderInventory) -> SessionState {
+        let meta: SessionMeta
+        switch inventory.meta {
+        case .success(let value):
+            guard value.schemaVersion <= SessionMeta.currentSchemaVersion else {
+                return .unusable("newer schema: \(value.schemaVersion)")
+            }
+            meta = value
+        case .failure(let problem): return .unusable(String(describing: problem))
+        }
+        if inventory.lockHeld { return .capturing }
+        if meta.capture == .inProgress
+            || inventory.spoolExists.present.contains(where: { $0.1 })
+            || meta.tracks.present.contains(where: {
+                $0.1.firstSampleHostSeconds != nil && inventory.finalAudioExists[$0.0] != true
+            }) {
+            return .needsFinalize
+        }
+        guard inventory.finalAudioExists.present.contains(where: { $0.1 }) else { return .unusable("no audio") }
+        return inventory.segmentsDecodes ? .transcribed : .readyToTranscribe
+    }
 }
 
 public struct SessionListing: Sendable, Equatable, Identifiable {
@@ -118,23 +168,95 @@ public actor SessionStore {
     /// Takes the CaptureLease BEFORE writing meta.json (so a folder never looks dead while it is being set up) and returns it;
     /// the caller keeps it until the session is finalized, then calls `release()`.
     public func create(_ draft: SessionDraft, mic: TrackSource, remote: TrackSource, app: AppInfo) throws -> (ref: SessionRef, lease: CaptureLease) {
-        fatalError("not implemented")
+        let manager = FileManager.default
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let startedAt = Date(timeIntervalSince1970: floor(now().timeIntervalSince1970))
+        let zone = timeZone()
+        var taken = Set(try manager.contentsOfDirectory(atPath: root.path))
+        while true {
+            let name = FolderNamer.name(company: draft.company, startedAt: startedAt, timeZone: zone, taken: taken)
+            let folder = SessionFolder(url: root.appendingPathComponent(name, isDirectory: true))
+            // FileManager accepts an existing directory; mkdir reserves the name exclusively.
+            guard mkdir(folder.url.path, 0o755) == 0 else {
+                if errno == EEXIST {
+                    taken.formUnion(try manager.contentsOfDirectory(atPath: root.path))
+                    taken.insert(name)
+                    continue
+                }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            do {
+                guard let lease = CaptureLease.acquire(folder.lock) else { throw CocoaError(.fileWriteUnknown) }
+                let meta = SessionMeta(id: UUID(), company: draft.company, title: draft.title,
+                                       timeZone: zone.identifier, startedAt: startedAt, app: app,
+                                       tracks: .init(me: .init(source: mic), remote: .init(source: remote)))
+                try writeMeta(meta, to: folder)
+                return (SessionRef(id: meta.id, folder: folder), lease)
+            } catch {
+                try? manager.removeItem(at: folder.url)
+                throw error
+            }
+        }
     }
 
-    public func meta(of ref: SessionRef) throws -> SessionMeta { fatalError("not implemented") }
+    public func meta(of ref: SessionRef) throws -> SessionMeta {
+        try decoder().decode(SessionMeta.self, from: Data(contentsOf: ref.folder.meta))
+    }
 
     /// Read-modify-write of meta.json inside the actor => no lost updates between the controller, finalize and recovery.
     /// Refuses to write a file whose schemaVersion is newer than the app supports.
     @discardableResult
     public func update(_ ref: SessionRef, _ mutate: @Sendable (inout SessionMeta) -> Void) throws -> SessionMeta {
-        fatalError("not implemented")
+        var value = try meta(of: ref)
+        mutate(&value)
+        try writeMeta(value, to: ref.folder)
+        return value
     }
 
-    public func list() throws -> [SessionListing] { [] }
+    public func list() throws -> [SessionListing] {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: root.path) else { return [] }
+        let folders = try manager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])
+        var listings: [SessionListing] = []
+        for url in folders {
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let folder = SessionFolder(url: url)
+            guard let value = try? decoder().decode(SessionMeta.self, from: Data(contentsOf: folder.meta)) else { continue }
+            let ref = SessionRef(id: value.id, folder: folder)
+            let hasAudio = value.tracks.present.contains { $0.1.audio != nil }
+            listings.append(SessionListing(ref: ref, company: value.company, title: value.title,
+                                           startedAt: value.startedAt,
+                                           durationSeconds: hasAudio ? SessionTimeline.duration(of: value) : nil,
+                                           state: try state(of: ref)))
+        }
+        return listings.sorted {
+            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+            return $0.ref.folder.url.path < $1.ref.folder.url.path
+        }
+    }
 
-    public func state(of ref: SessionRef) throws -> SessionState { fatalError("not implemented") }
+    public func state(of ref: SessionRef) throws -> SessionState {
+        let result: Result<SessionMeta, InventoryProblem>
+        do { result = .success(try meta(of: ref)) }
+        catch SessionMetaError.newerThanSupported(let found, _) { result = .failure(.newerSchema(found)) }
+        catch {
+            result = .failure(FileManager.default.fileExists(atPath: ref.folder.meta.path)
+                ? .undecodable(String(describing: error)) : .missing)
+        }
+        func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
+        return SessionClassifier.classify(.init(
+            meta: result, lockHeld: CaptureLease.isHeld(ref.folder.lock),
+            spoolExists: .init(me: exists(ref.folder.spool(.me)), remote: exists(ref.folder.spool(.remote))),
+            finalAudioExists: .init(me: exists(ref.folder.audio(.me)), remote: exists(ref.folder.audio(.remote))),
+            segmentsDecodes: (try? segments(of: ref)) != nil))
+    }
 
-    public func segments(of ref: SessionRef) throws -> SegmentsFile? { fatalError("not implemented") }
+    public func segments(of ref: SessionRef) throws -> SegmentsFile? {
+        guard FileManager.default.fileExists(atPath: ref.folder.segments.path) else { return nil }
+        let file = try decoder().decode(SegmentsFile.self, from: Data(contentsOf: ref.folder.segments))
+        guard file.schemaVersion <= SegmentsFile.currentSchemaVersion else { throw CocoaError(.fileReadCorruptFile) }
+        return file
+    }
 
     /// Writes segments.json, then renders and writes transcript.md (existing transcript.md moves to transcript.prev.md first).
     /// The order matters: transcript.md is derived, so a crash between the two leaves a stale-but-valid state
@@ -146,5 +268,29 @@ public actor SessionStore {
     public func rerenderTranscript(_ ref: SessionRef) throws { fatalError("not implemented") }
 
     /// Deletes a folder that has no audio at all (start failed after `create`). Refuses otherwise.
-    public func discardIfEmpty(_ ref: SessionRef) throws { fatalError("not implemented") }
+    public func discardIfEmpty(_ ref: SessionRef) throws {
+        _ = try meta(of: ref)
+        let hasAudio = Track.allCases.contains { track in
+            [ref.folder.spool(track), ref.folder.audio(track), ref.folder.audioPart(track)]
+                .contains { FileManager.default.fileExists(atPath: $0.path) }
+        }
+        guard !hasAudio else { throw CocoaError(.fileWriteNoPermission) }
+        try FileManager.default.removeItem(at: ref.folder.url)
+    }
+
+    private func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
+    private func writeMeta(_ meta: SessionMeta, to folder: SessionFolder) throws {
+        guard meta.schemaVersion <= SessionMeta.currentSchemaVersion else {
+            throw SessionMetaError.newerThanSupported(found: meta.schemaVersion, supported: SessionMeta.currentSchemaVersion)
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(meta).write(to: folder.meta, options: .atomic)
+    }
 }

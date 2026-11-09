@@ -6,10 +6,20 @@ import Foundation
 enum SessionTimeline {
     /// t = 0 is the earliest `firstSampleHostSeconds` among present tracks. Offsets are therefore all >= 0.
     /// Derived on demand; never stored (meta.json keeps only the first-sample facts).
-    static func offsets(of tracks: PerTrack<TrackMeta>) -> PerTrack<Double> { fatalError("not implemented") }
+    static func offsets(of tracks: PerTrack<TrackMeta>) -> PerTrack<Double> {
+        guard let origin = tracks.present.compactMap({ $0.1.firstSampleHostSeconds }).min() else { return .init() }
+        return .init(me: tracks.me?.firstSampleHostSeconds.map { $0 - origin },
+                     remote: tracks.remote?.firstSampleHostSeconds.map { $0 - origin })
+    }
 
     /// max over tracks of (offset + audio duration). The only definition of "duration" in the system.
-    static func duration(of meta: SessionMeta) -> Double { fatalError("not implemented") }
+    static func duration(of meta: SessionMeta) -> Double {
+        let offsets = offsets(of: meta.tracks)
+        return meta.tracks.present.compactMap { track, value in
+            guard let audio = value.audio, let offset = offsets[track] else { return nil as Double? }
+            return offset + audio.durationSeconds
+        }.max() ?? 0
+    }
 }
 
 /// Pure. Shifts each track's engine segments by its offset and merges into one total order:
