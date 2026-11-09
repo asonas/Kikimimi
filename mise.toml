@@ -56,5 +56,10 @@ mkdir -p "$BUILD_DIR/logs"
 log="$PWD/$BUILD_DIR/logs/$(date +%Y%m%d-%H%M%S)-$$"
 echo "stdout: $log.stdout.log"; echo "stderr: $log.stderr.log"
 trap 'tail -n 20 "$log.stderr.log" 2>/dev/null || true' EXIT     # show the result line once the app has exited
-open -n -W --stdout "$log.stdout.log" --stderr "$log.stderr.log" "$PWD/$APP_PATH" --args
+launch_env=()
+if [[ -n "${IR_MODEL_VARIANT:-}" ]]; then
+  launch_env+=(--env "IR_MODEL_VARIANT=$IR_MODEL_VARIANT")
+fi
+# Bash 3.2 with nounset treats an empty array as unset.
+open -n -W ${launch_env[@]+"${launch_env[@]}"} --stdout "$log.stdout.log" --stderr "$log.stderr.log" "$PWD/$APP_PATH" --args
 """

@@ -21,8 +21,21 @@ public enum LiveWhisper {
 public actor WhisperKitEngine: Transcriber, ModelProvider {
     private let base: URL
     private let variant: String
+    private let download: @Sendable (String, URL, @escaping @Sendable (Double) -> Void) async throws -> URL
+    private let prewarm: @Sendable (URL, URL) async throws -> URL
+    private var installation: Task<Void, any Error>?
 
-    init(base: URL, variant: String) { self.base = base; self.variant = variant }
+    init(base: URL, variant: String) {
+        self.init(base: base, variant: variant, download: { variant, base, progress in
+            try await WhisperKit.download(variant: variant, downloadBase: base) { progress($0.fractionCompleted) }
+        }, prewarm: { folder, base in try await Self.prepareModel(folder: folder, base: base) })
+    }
+
+    init(base: URL, variant: String,
+         download: @escaping @Sendable (String, URL, @escaping @Sendable (Double) -> Void) async throws -> URL,
+         prewarm: @escaping @Sendable (URL, URL) async throws -> URL) {
+        self.base = base; self.variant = variant; self.download = download; self.prewarm = prewarm
+    }
 
     /// Engine policy, owned here: remote then self, one at a time with one model instance (two large-v3-turbo instances
     /// double memory and contend for the ANE/GPU, so parallel is not faster). A SpeechAnalyzer adapter may choose differently.
@@ -80,26 +93,101 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
     }
 
     private func load() async throws -> WhisperKit {
-        guard let folder = try await installedFolder() else { throw TranscriberError.modelNotInstalled }
-        return try await WhisperKit(WhisperKitConfig(modelFolder: folder.path, verbose: false, prewarm: false, load: true, download: false))
+        guard let marker = try? installedModel() else { throw TranscriberError.modelNotInstalled }
+        let kit = try await OfflineWhisperKit(WhisperKitConfig(modelFolder: marker.folder.path, tokenizerFolder: marker.tokenizerFolder,
+                                                            verbose: false, prewarm: false, load: false, download: false))
+        do { try await kit.loadModels(); return kit }
+        catch { await kit.unloadModels(); throw error }
     }
 
     // MARK: ModelProvider
 
     /// Installed iff installed.json (written by us AFTER download + prewarm succeeded) names this variant and every
     /// ModelSpec.requiredEntries path exists under its folder. We trust neither WhisperKit's folder layout nor a partial snapshot.
-    public func status() async -> ModelStatus { .notInstalled }
+    public func status() async -> ModelStatus { (try? installedModel()) != nil ? .ready : .notInstalled }
 
     public func install(progress: @escaping @Sendable (ModelStatus) -> Void) async throws {
-        // 1. let folder = try await WhisperKit.download(variant: variant, downloadBase: base,
-        //        progressCallback: { p in progress(.downloading(fraction: p.fractionCompleted)) })
-        // 2. progress(.optimizing); load with prewarm: true, download: false; unload.
-        //    (pays the first-time Core ML specialization now, with a visible state, not during the first real transcription)
-        // 3. validate ModelSpec.requiredEntries; write installed.json {variant, folder, installedAt} atomically; progress(.ready)
-        // Cancel => Task cancellation => WhisperKit throws (v1.1.1 release notes: cancelled downloads now throw instead of returning a partial folder).
-        // An install and a transcription never overlap: TranscriptionService runs a job only when `model == .ready`.
-        fatalError("not implemented")
+        if let installation { try await installation.value; return }
+        if (try? installedModel()) != nil { progress(.ready); return }
+        let task = Task { try await performInstall(progress: progress) }
+        installation = task
+        do {
+            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            installation = nil
+        } catch { installation = nil; throw error }
     }
 
-    private func installedFolder() async throws -> URL? { fatalError("not implemented: read installed.json, validate entries") }
+    struct InstalledModel: Codable, Sendable {
+        let variant: String
+        let folder: URL
+        let tokenizerFolder: URL
+        let installedAt: Date
+    }
+
+    private func installedModel() throws -> InstalledModel? {
+        let url = base.appendingPathComponent(ModelSpec.installMarker)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let marker = try decoder.decode(InstalledModel.self, from: Data(contentsOf: url))
+        guard marker.variant == variant else { return nil }
+        try validate(folder: marker.folder, entries: ModelSpec.requiredEntries)
+        try validate(folder: marker.tokenizerFolder, entries: ModelSpec.tokenizerEntries)
+        return marker
+    }
+
+    private func validate(folder: URL, entries: [String]) throws {
+        let root = base.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        guard folder.isFileURL, folder.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root) else { throw TranscriberError.modelNotInstalled }
+        for entry in entries {
+            let url = folder.appendingPathComponent(entry)
+            guard url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(root) else { throw TranscriberError.modelNotInstalled }
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if entry.hasSuffix(".mlmodelc") {
+                guard values.isDirectory == true else { throw TranscriberError.modelNotInstalled }
+            } else {
+                guard values.isDirectory == false, (values.fileSize ?? 0) > 0 else { throw TranscriberError.modelNotInstalled }
+            }
+        }
+    }
+
+    private func performInstall(progress: @escaping @Sendable (ModelStatus) -> Void) async throws {
+        try Task.checkCancellation()
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        progress(.downloading(fraction: 0))
+        let folder = try await download(variant, base) { value in
+            if value.isFinite { progress(.downloading(fraction: min(1, max(0, value)))) }
+        }
+        try Task.checkCancellation()
+        try validate(folder: folder, entries: ModelSpec.requiredEntries)
+        progress(.optimizing)
+        try Task.checkCancellation()
+        let tokenizer = try await prewarm(folder, base)
+        try Task.checkCancellation()
+        try validate(folder: folder, entries: ModelSpec.requiredEntries)
+        try validate(folder: tokenizer, entries: ModelSpec.tokenizerEntries)
+        let marker = InstalledModel(variant: variant, folder: folder, tokenizerFolder: tokenizer, installedAt: Date())
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(marker)
+        try Task.checkCancellation()
+        try data.write(to: base.appendingPathComponent(ModelSpec.installMarker), options: .atomic)
+        progress(.ready)
+    }
+
+    private static func prepareModel(folder: URL, base: URL) async throws -> URL {
+        let kit = try await WhisperKit(WhisperKitConfig(modelFolder: folder.path, tokenizerFolder: base,
+                                                      verbose: false, prewarm: false, load: false, download: false))
+        do {
+            try await kit.prewarmModels()
+            try Task.checkCancellation()
+            // This install-only load resolves the tokenizer into our base as well.
+            try await kit.loadModels()
+            try Task.checkCancellation()
+            let cache = HubApiWrapper(downloadBase: base).localRepoLocation(.init(id: "openai/whisper-\(kit.modelVariant.description)"))
+            let tokenizer = FileManager.default.fileExists(atPath: cache.appendingPathComponent("tokenizer.json").path) ? cache : folder
+            _ = try await LocalWhisperTokenizer.load(from: tokenizer)
+            await kit.unloadModels()
+            return tokenizer
+        } catch { await kit.unloadModels(); throw error }
+    }
 }

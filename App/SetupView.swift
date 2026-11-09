@@ -34,7 +34,7 @@ struct SetupView: View {
                     }
                 }
                 microphoneInput
-                row("書き起こしモデル", detail: "未インストール。録音は可能です", ready: false) { EmptyView() }
+                modelRow
             }
         }
         .padding(24)
@@ -70,6 +70,33 @@ struct SetupView: View {
 
     private var previewKey: String {
         "\(env.settings.settings.mic?.deviceUID ?? "")/\(env.settings.settings.mic?.channel ?? 0)/\(scenePhase)/\(env.recorder.phase.isCapturing)/\(env.readiness.readiness.mic)/\(devices)"
+    }
+
+    private var modelRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("書き起こしモデル").font(.headline)
+            Text(env.modelVariant).font(.caption).textSelection(.enabled)
+            if env.modelVariantOverridden {
+                Text("検証用のモデルに上書きされています（IR_MODEL_VARIANT）。通常のモデル設定は変更していません")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            switch env.transcription.model {
+            case .notInstalled:
+                Text("未インストール。録音は可能です").font(.subheadline).foregroundStyle(.secondary)
+                Button("モデルをダウンロード") { Task { await env.transcription.installModel() } }
+                    .disabled(env.recorder.phase.isCapturing || env.termination.requested)
+            case .downloading(let fraction):
+                ProgressView("モデルをダウンロード中 \(Int(fraction * 100))%", value: fraction)
+            case .optimizing:
+                ProgressView("初回の最適化をしています。しばらくお待ちください")
+            case .ready:
+                Label("インストール済み", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            case .failed(let message):
+                Text("導入できませんでした: \(message)").font(.caption).foregroundStyle(.red)
+                Button("ダウンロードを再試行") { Task { await env.transcription.installModel() } }
+                    .disabled(env.recorder.phase.isCapturing || env.termination.requested)
+            }
+        }
     }
 
     private var microphoneInput: some View {
@@ -169,7 +196,7 @@ struct SetupView: View {
         #if DEBUG
         let screen = env.readiness.readiness.screen
         let mic = env.readiness.readiness.mic
-        FileHandle.standardError.write(Data("SETUP screen=\(screen) microphone=\(mic) input=\(env.readiness.readiness.micDevice) model=notInstalled\n".utf8))
+        FileHandle.standardError.write(Data("SETUP screen=\(screen) microphone=\(mic) input=\(env.readiness.readiness.micDevice) model=\(env.transcription.model) variant=\(env.modelVariant) override=\(env.modelVariantOverridden)\n".utf8))
         #endif
     }
 }

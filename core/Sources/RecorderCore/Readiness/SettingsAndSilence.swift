@@ -25,7 +25,8 @@ public enum ModelSpec {
     /// Folder is complete iff these exist and our marker was written after a successful download+prewarm.
     public static let requiredEntries = ["AudioEncoder.mlmodelc", "MelSpectrogram.mlmodelc", "TextDecoder.mlmodelc",
                                          "TextDecoderContextPrefill.mlmodelc", "config.json", "generation_config.json"]
-    public static let installMarker = ".interview-recorder-installed"
+    public static let installMarker = "installed.json"
+    public static let tokenizerEntries = ["tokenizer.json", "tokenizer_config.json"]
 }
 
 @MainActor @Observable

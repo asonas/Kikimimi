@@ -15,6 +15,8 @@ final class AppEnvironment {
     let readiness: ReadinessModel
     let recorder: RecordingController
     let transcription: TranscriptionService
+    let modelVariant: String
+    let modelVariantOverridden: Bool
     let termination = TerminationCoordinator()
     /// Launch recovery plus the first readiness refresh. The UI does not wait for it; the headless runner does.
     let launched: Task<Void, Never>
@@ -35,7 +37,17 @@ final class AppEnvironment {
             .appendingPathComponent("InterviewRecorder", isDirectory: true)
         let store = SessionStore(root: settings.settings.recordingsRoot ?? support.appendingPathComponent("Recordings"))
         let finalizer = SessionFinalizer(store: store, audio: LiveAudio.finalizer())
-        let whisper = LiveWhisper.engine(base: support.appendingPathComponent("Models"), variant: settings.settings.modelVariant)
+        #if DEBUG
+        let value = ProcessInfo.processInfo.environment["IR_MODEL_VARIANT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let override = value.flatMap { $0.isEmpty ? nil : $0 }
+        #else
+        let override: String? = nil
+        #endif
+        let variant = override ?? settings.settings.modelVariant
+        #if DEBUG
+        FileHandle.standardError.write(Data("MODEL variant=\(variant) override=\(override != nil)\n".utf8))
+        #endif
+        let whisper = LiveWhisper.engine(base: support.appendingPathComponent("Models"), variant: variant)
         let transcription = TranscriptionService(store: store, transcriber: whisper, models: whisper,
             language: { settings.settings.language })
         let devices = LiveAudio.devices()
@@ -56,13 +68,16 @@ final class AppEnvironment {
             await readiness.refresh()
         }
         return AppEnvironment(settings: settings, store: store, readiness: readiness,
-            recorder: recorder, transcription: transcription, launched: launched)
+            recorder: recorder, transcription: transcription, launched: launched,
+            modelVariant: variant, modelVariantOverridden: override != nil)
     }
 
     private init(settings: SettingsStore, store: SessionStore, readiness: ReadinessModel,
-                 recorder: RecordingController, transcription: TranscriptionService, launched: Task<Void, Never>) {
+                 recorder: RecordingController, transcription: TranscriptionService, launched: Task<Void, Never>,
+                 modelVariant: String, modelVariantOverridden: Bool) {
         self.settings = settings; self.store = store; self.readiness = readiness
         self.recorder = recorder; self.transcription = transcription; self.launched = launched
+        self.modelVariant = modelVariant; self.modelVariantOverridden = modelVariantOverridden
     }
     // live() pseudocode:
     //   settings   = SettingsStore()
