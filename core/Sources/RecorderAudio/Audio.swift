@@ -62,10 +62,56 @@ actor TrackRecorder {
 /// CAF, LPCM int16 little-endian, mono, at the source rate. AVAudioFile(forWriting:settings:) as in the kill -9 probe.
 /// Verified on macOS 27.2: a CAF LPCM file killed with SIGKILL reopens with all but the last ~70 ms (see design.md).
 struct SpoolWriter: ~Copyable {
-    init(url: URL, sampleRate: Double) throws {}
-    mutating func append(_ samples: [Float]) throws { fatalError("not implemented") }   // float -> int16 with clamp
-    mutating func appendSilence(frames: Int) throws { fatalError("not implemented") }   // in <= 1 s blocks
-    consuming func close() { fatalError("not implemented") }
+    private var file: AVAudioFile?
+    private let format: AVAudioFormat
+    private let syncFD: Int32
+    private var unsyncedFrames = 0
+
+    init(url: URL, sampleRate: Double) throws {
+        guard sampleRate.isFinite, sampleRate >= 1,
+              let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)
+        else { throw CocoaError(.fileWriteInvalidFileName) }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings, commonFormat: .pcmFormatInt16, interleaved: true)
+        let fd = open(url.path, O_WRONLY)
+        guard fd >= 0 else { throw POSIXError(.EIO) }
+        self.format = format
+        self.file = file
+        self.syncFD = fd
+    }
+
+    mutating func append(_ samples: [Float]) throws {
+        let block = Int(format.sampleRate)
+        for start in stride(from: 0, to: samples.count, by: block) {
+            let count = min(block, samples.count - start)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count))!
+            buffer.frameLength = AVAudioFrameCount(count)
+            let output = buffer.int16ChannelData![0]
+            for i in 0..<count {
+                let sample = samples[start + i]
+                let clamped = sample.isNaN ? 0 : min(1, max(-1, sample))
+                output[i] = Int16(clamping: Int((Double(clamped) * 32768).rounded()))
+            }
+            try file!.write(from: buffer)
+            unsyncedFrames += count
+            if Double(unsyncedFrames) >= format.sampleRate * 5 {
+                guard fsync(syncFD) == 0 else { throw POSIXError(.EIO) }
+                unsyncedFrames = 0
+            }
+        }
+    }
+
+    mutating func appendSilence(frames: Int) throws {
+        guard frames >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        var remaining = frames
+        while remaining > 0 {
+            let count = min(remaining, Int(format.sampleRate))
+            try append([Float](repeating: 0, count: count))
+            remaining -= count
+        }
+    }
+
+    consuming func close() { file = nil }
+    deinit { _ = fsync(syncFD); Darwin.close(syncFD) }
 }
 
 /// spool.caf -> (AVAudioConverter to 48 kHz if the spool is above 48 kHz) -> .m4a.part (AAC 64 kbps mono) -> verify -> rename.
@@ -73,7 +119,112 @@ struct SpoolWriter: ~Copyable {
 /// output rate (spoolFrames * outRate / spoolRate), tolerance 2048 frames (AAC priming). meta's `audio.sampleRate`/`frames`
 /// are the m4a's.
 struct AACFinalizer: AudioFinalizer {
-    func finalize(_ folder: SessionFolder, clockTolerance: Double) async throws -> FinalizedAudio { fatalError("not implemented") }
+    func finalize(_ folder: SessionFolder, clockTolerance: Double) async throws -> FinalizedAudio {
+        let manager = FileManager.default
+        var tracks = PerTrack<TrackAudio>()
+        for track in Track.allCases {
+            let spool = folder.spool(track), final = folder.audio(track), part = folder.audioPart(track)
+            if manager.fileExists(atPath: part.path) { try manager.removeItem(at: part) }
+            if manager.fileExists(atPath: final.path) {
+                tracks[track] = try facts(final)
+                if manager.fileExists(atPath: spool.path) { try manager.removeItem(at: spool) }
+            } else if manager.fileExists(atPath: spool.path) {
+                try repairSpoolTail(spool)
+                let input = try AVAudioFile(forReading: spool)
+                let rate = Self.outputSampleRate(forSpoolRate: input.processingFormat.sampleRate)
+                let expected = Double(input.length) * rate / input.processingFormat.sampleRate
+                try encode(input, to: part, rate: rate)
+                let audio = try verify(url: part, expectedFrames: expected)
+                try manager.moveItem(at: part, to: final)
+                try manager.removeItem(at: spool)
+                var value = audio; value.file = final.lastPathComponent
+                tracks[track] = value
+            }
+        }
+        return FinalizedAudio(tracks: tracks)
+    }
+
+    func verify(url: URL, expectedFrames: Double) throws -> TrackAudio {
+        let audio = try facts(url)
+        guard expectedFrames.isFinite, abs(Double(audio.frames) - expectedFrames) <= 2048 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return audio
+    }
+
+    // CAF's data chunk may have an unfinished (-1) size or a partial int16 at its tail.
+    private func repairSpoolTail(_ url: URL) throws {
+        let handle = try FileHandle(forUpdating: url); defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        try handle.seek(toOffset: 0)
+        guard try handle.read(upToCount: 4) == Data("caff".utf8) else { throw CocoaError(.fileReadCorruptFile) }
+        var offset: UInt64 = 8
+        while offset + 12 <= size {
+            try handle.seek(toOffset: offset)
+            let header = try handle.read(upToCount: 12) ?? Data()
+            guard header.count == 12 else { throw CocoaError(.fileReadCorruptFile) }
+            if header.prefix(4) == Data("data".utf8) {
+                let start = offset + 16
+                guard size >= start else { throw CocoaError(.fileReadCorruptFile) }
+                try handle.truncate(atOffset: start + (size - start) / 2 * 2)
+                try handle.seek(toOffset: offset + 4)
+                try handle.write(contentsOf: Data(repeating: 0xff, count: 8))
+                return
+            }
+            let length = header.suffix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+            guard length <= size - offset - 12 else { throw CocoaError(.fileReadCorruptFile) }
+            offset += 12 + length
+        }
+        throw CocoaError(.fileReadCorruptFile)
+    }
+
+    private func encode(_ input: AVAudioFile, to url: URL, rate: Double) throws {
+        let output = try AVAudioFile(forWriting: url, settings: [
+            AVAudioFileTypeKey: kAudioFileM4AType, AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: rate, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        guard let converter = AVAudioConverter(from: input.processingFormat, to: output.processingFormat),
+              let source = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 8192),
+              let destination = AVAudioPCMBuffer(pcmFormat: output.processingFormat, frameCapacity: 8192)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        var readError: (any Error)?
+        while true {
+            try Task.checkCancellation()
+            var error: NSError?
+            let status = converter.convert(to: destination, error: &error) { requested, status in
+                guard input.framePosition < input.length else { status.pointee = .endOfStream; return nil }
+                do {
+                    let count = min(Int64(min(requested, source.frameCapacity)), input.length - input.framePosition)
+                    try input.read(into: source, frameCount: AVAudioFrameCount(count))
+                    status.pointee = source.frameLength > 0 ? .haveData : .endOfStream
+                    return source.frameLength > 0 ? source : nil
+                } catch { readError = error; status.pointee = .endOfStream; return nil }
+            }
+            if let readError { throw readError }
+            if let error { throw error }
+            if destination.frameLength > 0 { try output.write(from: destination) }
+            if status == .endOfStream { break }
+            if status == .error { throw CocoaError(.fileReadCorruptFile) }
+        }
+    }
+
+    private func facts(_ url: URL) throws -> TrackAudio {
+        let file = try AVAudioFile(forReading: url)
+        guard file.fileFormat.channelCount == 1, file.length > 0,
+              file.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEG4AAC,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 8192)
+        else { throw CocoaError(.fileReadCorruptFile) }
+        var peak: Float = 0
+        var read: Int64 = 0
+        while read < file.length {
+            try file.read(into: buffer, frameCount: AVAudioFrameCount(min(8192, file.length - read)))
+            guard buffer.frameLength > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            for i in 0..<Int(buffer.frameLength) { peak = max(peak, abs(buffer.floatChannelData![0][i])) }
+            read += Int64(buffer.frameLength)
+        }
+        return TrackAudio(file: url.lastPathComponent, sampleRate: file.fileFormat.sampleRate,
+                          frames: file.length, peakDBFS: peak > 0 ? 20 * log10(Double(peak)) : -120)
+    }
 
     /// The AAC encoder fails at 96 kHz and 192 kHz and succeeds at 44.1 kHz and 48 kHz on macOS 27.2
     /// (docs/design/phase1/evidence-a/aac-sample-rates.swift). A Rubix44 can run at 96 kHz, so this is reachable.
