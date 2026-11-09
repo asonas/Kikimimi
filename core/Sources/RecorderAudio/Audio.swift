@@ -45,7 +45,7 @@ final class MicSource: AudioSource {
 /// spool append, level events.
 /// Pseudocode:
 ///   for try await chunk in stream {
-///       if clock == nil { await plan.willWriteFirstSample(track, chunk.hostSeconds); spool = SpoolWriter(...); clock = TrackClock(rate, first)
+///       if clock == nil { try await plan.willWriteFirstSample(track, chunk.hostSeconds); spool = SpoolWriter(...); clock = TrackClock(rate, first)
 ///                         digital = DigitalSilenceDetector.forTrack(track, sampleRate: rate) }     // nil for remote
 ///       // BEFORE placement: the detector sees only what the device delivered, never TrackClock's padded zeros.
 ///       if let active = digital?.ingest(chunk.samples) { emit(.digitalSilence(track, active: active)) }
@@ -53,10 +53,91 @@ final class MicSource: AudioSource {
 ///       peak = max(peak, chunk.peak) ; emit .level(track, peak) once per second of audio, then reset peak
 ///   }   // thrown error => spool.close(); emit .trackFailed(track, mapped failure)
 actor TrackRecorder {
+    private let track: Track
+    private let source: any AudioSource
+    private let folder: SessionFolder
+    private let willWriteFirstSample: @Sendable (Track, Double) async throws -> Void
+    private let emit: @Sendable (CaptureEvent) -> Void
+    private var task: Task<ClockDiagnostics?, Never>?
+    private var stopped = false
+
     init(track: Track, source: any AudioSource, folder: SessionFolder, willWriteFirstSample: @escaping @Sendable (Track, Double) async throws -> Void,
-         emit: @escaping @Sendable (CaptureEvent) -> Void) {}
-    func run() async { fatalError("not implemented") }
-    func stop() async -> ClockDiagnostics? { fatalError("not implemented") }
+         emit: @escaping @Sendable (CaptureEvent) -> Void) {
+        self.track = track; self.source = source; self.folder = folder
+        self.willWriteFirstSample = willWriteFirstSample; self.emit = emit
+    }
+
+    func run() async {
+        if let task { _ = await task.value; return }
+        guard !stopped else { return }
+        let work = Task {
+            let diagnostics = await consume()
+            await source.stop()
+            return diagnostics
+        }
+        task = work
+        _ = await work.value
+    }
+
+    func stop() async -> ClockDiagnostics? {
+        stopped = true
+        await source.stop()
+        return await task?.value
+    }
+
+    private func consume() async -> ClockDiagnostics? {
+        var spool: SpoolWriter? = nil
+        var clock: TrackClock?
+        var digital: DigitalSilenceDetector?
+        var failureCode = TrackFailure.Code.streamStopped
+        var failure: TrackFailure?
+        var levelFrames = 0
+        var peak: Float = 0
+        do {
+            let stream = try await source.start()
+            for try await chunk in stream {
+                guard !chunk.samples.isEmpty else { continue }
+                failureCode = .formatChanged
+                guard chunk.sampleRate.isFinite, chunk.sampleRate >= 1,
+                      clock == nil || clock?.sampleRate == chunk.sampleRate else { throw CocoaError(.fileReadCorruptFile) }
+                failureCode = .streamStopped
+                guard chunk.hostSeconds.isFinite else { throw CocoaError(.fileReadCorruptFile) }
+                if clock == nil {
+                    failureCode = .writeFailed
+                    try await willWriteFirstSample(track, chunk.hostSeconds)
+                    spool = try SpoolWriter(url: folder.spool(track), sampleRate: chunk.sampleRate)
+                    clock = TrackClock(sampleRate: chunk.sampleRate, firstHostSeconds: chunk.hostSeconds)
+                    digital = DigitalSilenceDetector.forTrack(track, sampleRate: chunk.sampleRate)
+                }
+                if let active = digital?.ingest(chunk.samples) { emit(.digitalSilence(track, active: active)) }
+                let placement = clock!.placement(chunkHostSeconds: chunk.hostSeconds, frameCount: chunk.samples.count)
+                failureCode = .writeFailed
+                switch placement {
+                case .append: try spool?.append(chunk.samples)
+                case .padSilence(let frames):
+                    try spool?.appendSilence(frames: frames)
+                    try spool?.append(chunk.samples)
+                case .dropLeading(let frames): try spool?.append(Array(chunk.samples.dropFirst(frames)))
+                }
+                clock!.commit(placement, chunkHostSeconds: chunk.hostSeconds, frameCount: chunk.samples.count)
+                for sample in chunk.samples {
+                    if sample.isFinite { peak = max(peak, abs(sample)) }
+                    levelFrames += 1
+                    if Double(levelFrames) >= chunk.sampleRate {
+                        emit(.level(track, peakDBFS: peak > 0 ? 20 * log10(peak) : -120))
+                        levelFrames = 0; peak = 0
+                    }
+                }
+                failureCode = .streamStopped
+            }
+        } catch {
+            failure = TrackFailure(code: failureCode, message: String(describing: error),
+                                   atSeconds: clock.map { Double($0.framesPlaced) / $0.sampleRate })
+        }
+        if let writer = consume spool { writer.close() }
+        if let failure { emit(.trackFailed(track, failure)) }
+        return clock?.diagnostics
+    }
 }
 
 /// CAF, LPCM int16 little-endian, mono, at the source rate. AVAudioFile(forWriting:settings:) as in the kill -9 probe.
