@@ -5,7 +5,13 @@ import RecorderCore
 @main
 struct InterviewRecorderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var env = AppEnvironment.live()
+    @State private var env: AppEnvironment
+
+    init() {
+        let environment = AppEnvironment.live()
+        _env = State(initialValue: environment)
+        AppDelegate.environment = environment
+    }
 
     var body: some Scene {
         MenuBarExtra { MenuView() } label: { LaunchIcon() }
@@ -31,6 +37,7 @@ private struct LaunchIcon: View {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var environment: AppEnvironment?
     static let launchMode: LaunchMode = {
         do { return try LaunchMode.parse(CommandLine.arguments) }
         catch {
@@ -52,9 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
-        if case .headless = mode {
-            FileHandle.standardError.write(Data("HEADLESS FAILED: Headless runner is not implemented yet\n".utf8))
-            exit(2)
+        if case .headless(let command) = mode {
+            guard let environment = Self.environment else {
+                FileHandle.standardError.write(Data("HEADLESS FAILED: missing app environment\n".utf8))
+                exit(2)
+            }
+            Task { await HeadlessRunner.run(command, env: environment) }
+            return
         }
         #endif
         NSApp.activate(ignoringOtherApps: true)

@@ -44,7 +44,8 @@ final class AppEnvironment {
         let recorder = RecordingController(.init(store: store, backend: LiveAudio.backend(), devices: devices,
             finalizer: finalizer, app: app), readiness: { readiness.readiness }, mic: { settings.settings.mic }, hooks: hooks)
         let launched = Task {
-            _ = try? await LaunchRecovery.run(store: store, finalizer: finalizer)
+            do { _ = try await LaunchRecovery.run(store: store, finalizer: finalizer) }
+            catch { Logger(subsystem: "as.ason.InterviewRecorder", category: "launch").error("Launch recovery could not list sessions") }
             await readiness.refresh()
         }
         return AppEnvironment(settings: settings, store: store, readiness: readiness,
