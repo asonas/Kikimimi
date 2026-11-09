@@ -139,12 +139,25 @@ private struct MenuView: View {
                             if let seconds = session.durationSeconds { Text(Duration.seconds(seconds), format: .time(pattern: .hourMinuteSecond)) }
                         }
                         .font(.caption).foregroundStyle(.secondary)
-                        Text(session.state.label).font(.caption).foregroundStyle(session.state.needsAttention ? .orange : .secondary)
+                        Text(job(for: session)?.label ?? session.state.label)
+                            .font(.caption).foregroundStyle(session.state.needsAttention ? .orange : .secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
                 .help("Finderで録音フォルダを表示")
+                HStack {
+                    if session.state == .transcribed {
+                        Button("文字起こしを開く") { NSWorkspace.shared.open(session.ref.folder.transcript) }
+                    }
+                    if session.state == .readyToTranscribe || session.state == .transcribed {
+                        Button(session.state == .transcribed ? "もう一度文字起こし" : "文字起こし") {
+                            env.transcription.enqueue(session.ref)
+                        }
+                        .disabled(job(for: session)?.isBusy == true || env.termination.requested)
+                    }
+                }
+                .font(.caption)
             }
             if let listError { Text(listError).font(.caption).foregroundStyle(.red) }
             Divider()
@@ -161,6 +174,10 @@ private struct MenuView: View {
                 do { try await Task.sleep(for: .seconds(1)) } catch { break }
             }
         }
+    }
+
+    private func job(for session: SessionListing) -> TranscriptionJobState? {
+        env.transcription.jobs.first { $0.id == session.id }?.state
     }
 }
 
@@ -225,6 +242,22 @@ private extension SessionState {
         case .readyToTranscribe: "文字起こし待ち"
         case .transcribed: "文字起こし済み"
         case .unusable: "録音を確認してください"
+        }
+    }
+}
+
+private extension TranscriptionJobState {
+    var isBusy: Bool {
+        switch self { case .queued, .waiting, .running: true; case .failed, .done: false }
+    }
+    var label: String {
+        switch self {
+        case .queued: "文字起こし待ち"
+        case .waiting(.recordingInProgress): "録音終了後に文字起こし"
+        case .waiting(.modelNotReady): "モデルの導入待ち"
+        case .running(let fraction): "文字起こし中 \(Int(fraction * 100))%"
+        case .failed(let message): "文字起こし失敗: \(message)"
+        case .done: "文字起こし済み"
         }
     }
 }

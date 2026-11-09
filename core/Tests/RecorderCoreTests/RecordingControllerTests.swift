@@ -330,3 +330,165 @@ private actor FakeControllerAudio: AudioFinalizer {
     #expect(try await rig.store.segments(of: listing.ref) == nil)
     #expect(rig.finalized.isEmpty)
 }
+
+private actor PipelineModels: ModelProvider {
+    let ready: Bool
+    init(ready: Bool = true) { self.ready = ready }
+    func status() async -> ModelStatus { ready ? .ready : .notInstalled }
+    func install(progress: @escaping @Sendable (ModelStatus) -> Void) async throws {
+        Issue.record("E2E must not install a model")
+    }
+}
+
+private actor PipelineTranscriber: Transcriber {
+    var requests: [TranscribeRequest] = []
+    var text = "最初の文字起こし"
+    var failure = false
+    func configure(text: String, failure: Bool = false) { self.text = text; self.failure = failure }
+    nonisolated func identity(language: String) -> TranscriberIdentity {
+        .init(engine: "fake", engineVersion: "1", model: "fake", language: language, chunking: "vad")
+    }
+    func transcribe(_ request: TranscribeRequest, progress: @escaping @Sendable (Track, Double) -> Void) async throws -> PerTrack<[EngineSegmentDTO]> {
+        requests.append(request)
+        if failure { throw TranscriberError.engine("scripted E2E failure") }
+        var output = PerTrack<[EngineSegmentDTO]>()
+        for (track, _) in request.audio.present {
+            progress(track, 0); progress(track, 1)
+            output[track] = [.init(start: 0, end: 0.5, text: text, avgLogprob: -0.1, noSpeechProb: 0, compressionRatio: 1)]
+        }
+        return output
+    }
+}
+
+@MainActor private func pipelineController(_ rig: ControllerRig, _ service: TranscriptionService) -> RecordingController {
+    var hooks = RecordingController.Hooks.transcribing(with: service)
+    let enqueue = hooks.sessionFinalized
+    hooks.sessionFinalized = { ref in
+        let held = CaptureLease.isHeld(ref.folder.lock)
+        #expect(!held, "Release the capture lease before enqueue")
+        enqueue(ref)
+    }
+    return RecordingController(.init(store: rig.store, backend: rig.backend, devices: FakeControllerDevices(),
+        finalizer: .init(store: rig.store, audio: rig.audio), app: .init(version: "1", build: "1", os: "test"),
+        now: { controllerNow.addingTimeInterval(10) }, availableDiskBytes: { _ in 5_000_000_000 }),
+        readiness: { ready }, mic: { preference }, hooks: hooks)
+}
+
+@Test @MainActor func pipelineStopFinalizesReleasesLeaseThenEnqueuesAndWritesTranscript() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    await rig.audio.setDelay()
+    try await controller.start(controllerDraft)
+    let ref = try #require(try await rig.store.list().first?.ref)
+    let stop = Task { await controller.stop() }
+    await waitUntil { await rig.audio.gate != nil }
+    #expect(CaptureLease.isHeld(ref.folder.lock))
+    #expect(service.jobs.isEmpty); #expect(await engine.requests.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: ref.folder.transcript.path))
+    await rig.audio.resume(); await stop.value
+    await waitUntil { service.jobs.first?.state == .done }
+    #expect(controller.phase == .idle)
+    #expect(await engine.requests.count == 1)
+    let request = try #require(await engine.requests.first)
+    #expect(request.audio.me?.resolvingSymlinksInPath().path == ref.folder.audio(.me).resolvingSymlinksInPath().path)
+    #expect(request.audio.remote?.resolvingSymlinksInPath().path == ref.folder.audio(.remote).resolvingSymlinksInPath().path)
+    let segments = try #require(try await rig.store.segments(of: ref))
+    #expect(segments.segments.map(\.start) == [0, 0.5])
+    #expect(try String(contentsOf: ref.folder.transcript, encoding: .utf8).contains("最初の文字起こし"))
+    #expect(try await rig.store.state(of: ref) == .transcribed)
+}
+
+@Test @MainActor func pipelineRetranscribeReplacesAndBacksUpOnlyAfterSuccess() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    try await controller.start(controllerDraft); await controller.stop()
+    await waitUntil { service.jobs.first?.state == .done }
+    let ref = try #require(try await rig.store.list().first?.ref)
+    let previous = try Data(contentsOf: ref.folder.transcript)
+    let audio = try Data(contentsOf: ref.folder.audio(.me))
+    await engine.configure(text: "新しい文字起こし")
+    service.enqueue(ref); service.enqueue(ref)
+    await waitUntil { service.jobs.first?.state == .done }
+    #expect(await engine.requests.count == 2)
+    #expect(try Data(contentsOf: ref.folder.transcriptBackup) == previous)
+    let current = try Data(contentsOf: ref.folder.transcript), segments = try Data(contentsOf: ref.folder.segments)
+    #expect(String(decoding: current, as: UTF8.self).contains("新しい文字起こし"))
+    #expect(try Data(contentsOf: ref.folder.audio(.me)) == audio)
+    await engine.configure(text: "失敗結果", failure: true)
+    service.enqueue(ref)
+    await waitUntil { if case .failed = service.jobs.first?.state { true } else { false } }
+    #expect(try Data(contentsOf: ref.folder.transcript) == current)
+    #expect(try Data(contentsOf: ref.folder.segments) == segments)
+    #expect(try Data(contentsOf: ref.folder.transcriptBackup) == previous)
+}
+
+@Test @MainActor func pipelineQuitAndRecoveryNeverAutoEnqueueButExplicitTranscribeWorks() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    try await controller.start(controllerDraft); await controller.stopForQuit()
+    #expect(service.jobs.isEmpty); #expect(await rig.audio.calls == 0)
+    let recovered = try await LaunchRecovery.run(store: rig.store, finalizer: .init(store: rig.store, audio: rig.audio))
+    let ref = try #require(recovered.first)
+    #expect(service.jobs.isEmpty); #expect(await engine.requests.isEmpty)
+    #expect(try await rig.store.state(of: ref) == .readyToTranscribe)
+    // Both the recent-session button and headless transcribe resolve the ref from this listing, then enqueue.
+    let listed = try #require(try await rig.store.list().first { $0.id == ref.id })
+    service.enqueue(listed.ref)
+    await waitUntil { service.jobs.first?.state == .done }
+    #expect(try String(contentsOf: ref.folder.transcript, encoding: .utf8).contains("最初の文字起こし"))
+}
+
+@Test @MainActor func pipelineFinalizeFailureNeverEnqueuesOrWritesTranscript() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    await rig.audio.setFailure()
+    try await controller.start(controllerDraft); await controller.stop()
+    #expect(service.jobs.isEmpty); #expect(await engine.requests.isEmpty)
+    let ref = try #require(try await rig.store.list().first?.ref)
+    #expect(try await rig.store.state(of: ref) == .needsFinalize)
+    #expect(!FileManager.default.fileExists(atPath: ref.folder.transcript.path))
+}
+
+@Test @MainActor func pipelineWithoutInstalledModelQueuesWithoutTranscribingOrInstalling() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(ready: false), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    try await controller.start(controllerDraft); await controller.stop()
+    await waitUntil { service.jobs.first?.state == .waiting(.modelNotReady) }
+    #expect(await engine.requests.isEmpty)
+    let ref = try #require(try await rig.store.list().first?.ref)
+    #expect(try await rig.store.state(of: ref) == .readyToTranscribe)
+    #expect(!FileManager.default.fileExists(atPath: ref.folder.transcript.path))
+}
+
+@Test @MainActor func pipelinePhaseHookHoldsQueuedWorkUntilCaptureAndFinalizeFinish() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let earlier = rig.controller()
+    try await earlier.start(controllerDraft); await earlier.stop()
+    let previous = try #require(try await rig.store.list().first?.ref)
+    let engine = PipelineTranscriber()
+    let service = TranscriptionService(store: rig.store, transcriber: engine, models: PipelineModels(), language: { "ja" })
+    let controller = pipelineController(rig, service)
+    try await controller.start(controllerDraft)
+    service.enqueue(previous)
+    await waitUntil { service.jobs.first?.state == .waiting(.recordingInProgress) }
+    #expect(await engine.requests.isEmpty)
+    await rig.audio.setDelay()
+    let stop = Task { await controller.stop() }
+    await waitUntil { await rig.audio.gate != nil }
+    #expect(service.jobs.first?.state == .waiting(.recordingInProgress))
+    #expect(await engine.requests.isEmpty)
+    await rig.audio.resume(); await stop.value
+    await waitUntil { service.jobs.count == 2 && service.jobs.allSatisfy { $0.state == .done } }
+    #expect(service.jobs.first?.id == previous.id)
+    #expect(await engine.requests.count == 2)
+}

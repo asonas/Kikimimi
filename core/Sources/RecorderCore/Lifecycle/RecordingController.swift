@@ -64,6 +64,13 @@ public final class RecordingController {
         public var phaseChanged: (RecordingPhase) -> Void = { _ in }
         public var sessionFinalized: (SessionRef) -> Void = { _ in }
         public init() {}
+
+        @MainActor public static func transcribing(with service: TranscriptionService) -> Self {
+            var hooks = Self()
+            hooks.phaseChanged = { service.setRecordingActive($0.isCapturing) }
+            hooks.sessionFinalized = { service.enqueue($0) }
+            return hooks
+        }
     }
 
     public init(_ deps: Dependencies, readiness: @escaping @MainActor () -> Readiness,
@@ -183,6 +190,8 @@ public final class RecordingController {
             let effects = transition(.captureStopped)
             if effects.contains(.finalize(stopping.ref, reason: stopping.reason)) {
                 try await deps.finalizer.run(stopping.ref, reason: stopping.reason, clockDiagnostics: diagnostics, endedAt: endedAt)
+                // The idle hook resumes queued jobs; neither it nor enqueue may observe a capture lease.
+                lease?.release(); lease = nil
                 for effect in transition(.finalizeSucceeded) {
                     if case .enqueueTranscription(let ref) = effect { hooks.sessionFinalized(ref) }
                 }

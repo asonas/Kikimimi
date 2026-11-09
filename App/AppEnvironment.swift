@@ -54,9 +54,7 @@ final class AppEnvironment {
         let readiness = ReadinessModel(probe: LiveAudio.permissions(), devices: devices,
             mic: { settings.settings.mic }, model: { transcription.model },
             requestedScreenBefore: settings.settings.screenCaptureRequested, relaunch: { Self.relaunch() })
-        var hooks = RecordingController.Hooks()
-        hooks.phaseChanged = { transcription.setRecordingActive($0.isCapturing) }
-        hooks.sessionFinalized = { transcription.enqueue($0) }
+        let hooks = RecordingController.Hooks.transcribing(with: transcription)
         let app = AppInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
             os: ProcessInfo.processInfo.operatingSystemVersionString)

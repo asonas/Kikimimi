@@ -68,19 +68,19 @@ enum HeadlessRunner {
                     return fail("unknown session")
                 }
                 env.transcription.enqueue(ref)
-                guard env.transcription.jobs.contains(where: { $0.id == id }) else {
-                    return fail("transcription service is not implemented yet")
-                }
                 var previous: TranscriptionJobState?
                 while let job = env.transcription.jobs.first(where: { $0.id == id }) {
                     if job.state != previous { log("Transcription: \(job.state)"); previous = job.state }
                     switch job.state {
                     case .done:
-                        let segments = try await env.store.segments(of: ref)
-                        for track in Track.allCases {
-                            log("\(track.rawValue): \(segments?.segments.filter { $0.speaker == track }.count ?? 0) segments")
+                        guard let segments = try await env.store.segments(of: ref) else { return fail("missing segments.json") }
+                        let markdown = try String(contentsOf: ref.folder.transcript, encoding: .utf8)
+                        guard !markdown.isEmpty, markdown.hasPrefix("---\n") else {
+                            return fail("transcript.md is empty or missing front matter")
                         }
-                        return succeed("transcribe segments=\(ref.folder.segments.path) transcript=\(ref.folder.transcript.path)")
+                        let me = segments.segments.filter { $0.speaker == .me }.count
+                        let remote = segments.segments.filter { $0.speaker == .remote }.count
+                        return succeed("transcribe self=\(me) remote=\(remote) segments=\(ref.folder.segments.path) transcript=\(ref.folder.transcript.path)")
                     case .failed(let message): return fail(message)
                     default: try await Task.sleep(for: .milliseconds(500))
                     }
