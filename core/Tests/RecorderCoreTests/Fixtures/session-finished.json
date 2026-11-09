@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "6F1C7E1B-3C0D-4C55-9F5B-0A1B2C3D4E5F",
+  "company": "Acme",
+  "title": "二次面接",
+  "timeZone": "Asia/Tokyo",
+  "startedAt": "2026-11-09T14:30:00Z",
+  "endedAt": "2026-11-09T16:00:00Z",
+  "endReason": "user",
+  "app": { "version": "0.1.0", "build": "1", "os": "27.2" },
+  "clock": "mach-host-seconds",
+  "tracks": {
+    "self": {
+      "source": { "kind": "mic", "deviceUID": "usb:rubix44", "deviceName": "Rubix44", "channel": 1, "deviceChannels": 4 },
+      "firstSampleHostSeconds": 812345.612,
+      "audio": { "file": "audio-self.m4a", "sampleRate": 48000, "frames": 255312000, "peakDBFS": -3.2 },
+      "diagnostics": { "gapFillFrames": 4800, "gapCount": 1, "overlapDroppedFrames": 12, "maxAbsDriftSeconds": 0.12 },
+      "failure": { "code": "deviceLost", "message": "接続が切れました", "atSeconds": 5319 }
+    },
+    "remote": {
+      "source": { "kind": "app", "bundleID": "com.google.Chrome", "name": "Google Chrome" },
+      "firstSampleHostSeconds": 812345.431,
+      "audio": { "file": "audio-remote.m4a", "sampleRate": 48000, "frames": 255320000, "peakDBFS": -11.8 }
+    }
+  }
+}

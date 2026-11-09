@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "6F1C7E1B-3C0D-4C55-9F5B-0A1B2C3D4E5F",
+  "company": "Acme",
+  "timeZone": "Asia/Tokyo",
+  "startedAt": "2026-11-09T14:30:00Z",
+  "app": { "version": "0.1.0", "build": "1", "os": "27.2" },
+  "clock": "mach-host-seconds",
+  "tracks": {
+    "remote": { "source": { "kind": "allSystemAudio" } }
+  }
+}

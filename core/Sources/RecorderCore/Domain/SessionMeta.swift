@@ -1,5 +1,9 @@
 import Foundation
 
+public enum SessionMetaError: Error, Sendable, Equatable {
+    case newerThanSupported(found: Int, supported: Int)
+}
+
 /// meta.json. Capture facts only. Written by `SessionStore` (the single writer).
 /// Transcription provenance lives in segments.json, never here.
 public struct SessionMeta: Sendable, Equatable, Codable {
@@ -131,7 +135,9 @@ extension SessionMeta {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
-        // TODO: schemaVersion > currentSchemaVersion => throw SessionMetaError.newerThanSupported (never rewrite such a file)
+        guard schemaVersion <= Self.currentSchemaVersion else {
+            throw SessionMetaError.newerThanSupported(found: schemaVersion, supported: Self.currentSchemaVersion)
+        }
         id = try c.decode(UUID.self, forKey: .id)
         company = try c.decode(String.self, forKey: .company)
         title = try c.decodeIfPresent(String.self, forKey: .title)
