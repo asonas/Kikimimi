@@ -3,6 +3,53 @@ import Foundation
 import Testing
 @testable import InterviewRecorderSpike
 
+@Test func selectsInputDevice() throws {
+    let devices = [InputDevice(id: 1, name: "Rubix44", uid: "rubix-uid", channels: 4, isDefault: false),
+        InputDevice(id: 2, name: "Mac microphone", uid: "mac-uid", channels: 1, isDefault: true),
+        InputDevice(id: 3, name: "Rubix44 extra", uid: "extra-uid", channels: 2, isDefault: false)]
+    #expect(try selectInputDevice(nil, from: devices).id == 2)
+    #expect(try selectInputDevice("rubix-uid", from: devices).id == 1)
+    #expect(try selectInputDevice("Rubix44", from: devices).id == 1)
+    #expect(try selectInputDevice("microphone", from: devices).id == 2)
+    #expect(throws: (any Error).self) { try selectInputDevice("Rubix", from: devices) }
+    #expect(throws: (any Error).self) { try selectInputDevice("missing", from: devices) }
+}
+
+@Test(arguments: [false, true]) func extractsOnlySelectedPCMChannel(interleaved: Bool) throws {
+    let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 4))
+    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+        sampleRate: 48_000, interleaved: interleaved, channelLayout: layout)
+    let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+    buffer.frameLength = 8
+    let samples = try #require(buffer.floatChannelData)
+    for channel in 0..<4 {
+        for frame in 0..<8 {
+            samples[interleaved ? 0 : channel][interleaved ? frame * 4 + channel : frame] = Float(channel * 10 + frame)
+        }
+    }
+    for channel in 1...4 {
+        let mono = try extractChannel(buffer, channel: channel)
+        #expect(mono.format.channelCount == 1)
+        #expect(mono.frameLength == 8)
+        let result = try #require(mono.floatChannelData)
+        for frame in 0..<8 { #expect(result[0][frame] == Float((channel - 1) * 10 + frame)) }
+    }
+    #expect(throws: (any Error).self) { try extractChannel(buffer, channel: 0) }
+    #expect(throws: (any Error).self) { try extractChannel(buffer, channel: 5) }
+}
+
+@Test func parsesInputOptionsAndEncodesUnspecifiedChannel() throws {
+    let options = try Options(["--input-device", "Rubix44", "--input-channel", "1", "--list-input-devices"])
+    #expect(options.inputDevice == "Rubix44")
+    #expect(options.inputChannel == 1)
+    #expect(options.listInputDevices)
+    for value in ["0", "-1", "x"] {
+        #expect(throws: (any Error).self) { try Options(["--input-channel", value]) }
+    }
+    let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(TrackMetadata())) as? [String: Any])
+    #expect(json["inputChannel"] is NSNull)
+}
+
 @Test func rejectsInvalidArguments() {
     for arguments in [["--duration", "nan"], ["--duration", "0"], ["--duration"], ["--bad", "x"]] {
         #expect(throws: (any Error).self) { try Options(arguments) }

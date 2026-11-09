@@ -48,6 +48,9 @@ struct SpikeError: Error, CustomStringConvertible {
 }
 
 struct Options {
+    var inputDevice: String?
+    var inputChannel: Int?
+    var listInputDevices = false
     var app: String?
     var duration = 5.0
     var ignorePreflight = false
@@ -57,6 +60,11 @@ struct Options {
         var index = 0
         while index < arguments.count {
             let flag = arguments[index]
+            if flag == "--list-input-devices" {
+                listInputDevices = true
+                index += 1
+                continue
+            }
             if flag == "--ignore-preflight" {
                 ignorePreflight = true
                 index += 1
@@ -65,6 +73,14 @@ struct Options {
             guard index + 1 < arguments.count else { throw SpikeError("Missing value: \(flag)") }
             let value = arguments[index + 1]
             switch flag {
+            case "--input-device":
+                guard !value.isEmpty else { throw SpikeError("Empty input device") }
+                inputDevice = value
+            case "--input-channel":
+                guard let channel = Int(value), channel > 0 else {
+                    throw SpikeError("--input-channel must be a positive integer (1-based)")
+                }
+                inputChannel = channel
             case "--app":
                 guard !value.isEmpty else { throw SpikeError("Empty bundle ID") }
                 app = value
@@ -82,6 +98,23 @@ struct Options {
 }
 
 struct TrackMetadata: Codable {
+    var inputDeviceUID: String?
+    var inputChannel: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case inputDeviceUID, inputChannel, firstSampleHostTimeSeconds, sampleRate, sourceChannels, channels, frames
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(inputDeviceUID, forKey: .inputDeviceUID)
+        try values.encode(inputChannel, forKey: .inputChannel)
+        try values.encode(firstSampleHostTimeSeconds, forKey: .firstSampleHostTimeSeconds)
+        try values.encode(sampleRate, forKey: .sampleRate)
+        try values.encode(sourceChannels, forKey: .sourceChannels)
+        try values.encode(channels, forKey: .channels)
+        try values.encode(frames, forKey: .frames)
+    }
     var firstSampleHostTimeSeconds: Double?
     var sampleRate: Double?
     var sourceChannels: UInt32?
@@ -97,8 +130,12 @@ final class AudioSink: @unchecked Sendable {
     private var metadata = TrackMetadata()
     private var failure: String?
     private var closed = false
+    private let inputChannel: Int?
 
-    init(url: URL) { self.url = url }
+    init(url: URL, inputChannel: Int? = nil) {
+        self.url = url
+        self.inputChannel = inputChannel
+    }
 
     func append(_ buffer: AVAudioPCMBuffer, hostSeconds: Double) {
         lock.lock()
@@ -107,11 +144,19 @@ final class AudioSink: @unchecked Sendable {
         do {
             guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                 sampleRate: buffer.format.sampleRate, channels: 1, interleaved: false),
-                let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
-                let converter = AVAudioConverter(from: buffer.format, to: monoFormat) else {
+                let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength) else {
                 throw SpikeError("Cannot create mono converter")
             }
-            try converter.convert(to: mono, from: buffer)
+            if let inputChannel {
+                let extracted = try extractChannel(buffer, channel: inputChannel)
+                mono.frameLength = extracted.frameLength
+                mono.floatChannelData![0].update(from: extracted.floatChannelData![0], count: Int(extracted.frameLength))
+            } else {
+                guard let converter = AVAudioConverter(from: buffer.format, to: monoFormat) else {
+                    throw SpikeError("Cannot create mono converter")
+                }
+                try converter.convert(to: mono, from: buffer)
+            }
             if file == nil {
                 file = try AVAudioFile(forWriting: url, settings: [
                     AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -191,18 +236,94 @@ final class StopFlag: @unchecked Sendable {
     var value: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
 }
 
-func inputDeviceName() -> String {
-    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+struct InputDevice: Equatable {
+    let id: AudioDeviceID
+    let name: String
+    let uid: String
+    let channels: Int
+    let isDefault: Bool
+}
+
+func selectInputDevice(_ query: String?, from devices: [InputDevice]) throws -> InputDevice {
+    let matches: [InputDevice]
+    if let query {
+        let exact = devices.filter { $0.uid == query || $0.name == query }
+        matches = exact.isEmpty ? devices.filter { $0.name.localizedCaseInsensitiveContains(query) } : exact
+    } else {
+        matches = devices.filter(\.isDefault)
+    }
+    guard matches.count == 1, let device = matches.first else {
+        throw SpikeError("Input device not found or ambiguous: \(query ?? "system default")\n" + describeInputDevices(devices))
+    }
+    return device
+}
+
+func describeInputDevices(_ devices: [InputDevice]) -> String {
+    devices.map { "\($0.name) | UID: \($0.uid) | input channels: \($0.channels) | default: \($0.isDefault)" }.joined(separator: "\n")
+}
+
+func inputDevices() throws -> [InputDevice] {
+    func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                 into value: inout T) throws {
+        var address = AudioObjectPropertyAddress(mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<T>.size)
+        let status = withUnsafeMutablePointer(to: &value) {
+            AudioObjectGetPropertyData(object, &address, 0, nil, &size, $0)
+        }
+        guard status == noErr else { throw SpikeError("Cannot read audio device property: \(status)") }
+    }
+    var defaultID = AudioDeviceID(0)
+    try read(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, into: &defaultID)
+    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-    var device = AudioDeviceID(0)
-    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address,
-        0, nil, &size, &device) == noErr else { return "Unknown" }
-    address.mSelector = kAudioObjectPropertyName
-    var name: Unmanaged<CFString>?
-    size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-    guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return "Unknown" }
-    return name?.takeRetainedValue() as String? ?? "Unknown"
+    var size: UInt32 = 0
+    var status = AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
+    guard status == noErr else { throw SpikeError("Cannot enumerate audio devices: \(status)") }
+    var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+    status = ids.withUnsafeMutableBytes {
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, $0.baseAddress!)
+    }
+    guard status == noErr else { throw SpikeError("Cannot enumerate audio devices: \(status)") }
+    var devices: [InputDevice] = []
+    for id in ids {
+        var config = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var bytes: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &config, 0, nil, &bytes) == noErr, bytes > 0 else { continue }
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: Int(bytes), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { storage.deallocate() }
+        let result = AudioObjectGetPropertyData(id, &config, 0, nil, &bytes, storage)
+        guard result == noErr else { throw SpikeError("Cannot read input channels: \(result)") }
+        let channels = UnsafeMutableAudioBufferListPointer(storage.assumingMemoryBound(to: AudioBufferList.self))
+            .reduce(0) { $0 + Int($1.mNumberChannels) }
+        guard channels > 0 else { continue }
+        var name: CFString = "" as CFString
+        var uid: CFString = "" as CFString
+        try read(id, kAudioObjectPropertyName, into: &name)
+        try read(id, kAudioDevicePropertyDeviceUID, into: &uid)
+        devices.append(InputDevice(id: id, name: name as String, uid: uid as String,
+            channels: channels, isDefault: id == defaultID))
+    }
+    return devices
+}
+
+func extractChannel(_ buffer: AVAudioPCMBuffer, channel: Int) throws -> AVAudioPCMBuffer {
+    guard channel > 0, channel <= Int(buffer.format.channelCount),
+        buffer.format.commonFormat == .pcmFormatFloat32, let source = buffer.floatChannelData,
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: buffer.format.sampleRate,
+            channels: 1, interleaved: false),
+        let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: buffer.frameLength),
+        let destination = mono.floatChannelData else {
+        throw SpikeError("Invalid input channel or unsupported PCM format: \(channel)")
+    }
+    mono.frameLength = buffer.frameLength
+    for frame in 0..<Int(buffer.frameLength) {
+        destination[0][frame] = buffer.format.isInterleaved
+            ? source[0][frame * Int(buffer.format.channelCount) + channel - 1]
+            : source[channel - 1][frame]
+    }
+    return mono
 }
 
 struct Metadata: Codable {
@@ -223,6 +344,10 @@ struct Metadata: Codable {
         logStartupDiagnostics()
         do {
             let options = try Options(Array(CommandLine.arguments.dropFirst()))
+            if options.listInputDevices {
+                print(describeInputDevices(try inputDevices()))
+                return
+            }
             try await record(options)
         } catch {
             logDiagnosticError("record", error)
@@ -246,7 +371,16 @@ struct Metadata: Codable {
         if !preflight && !options.ignorePreflight {
             log("Missing screen recording permission. Allow InterviewRecorderSpike in System Settings > Privacy & Security > Screen Recording, then relaunch.")
             _ = CGRequestScreenCaptureAccess()
-            throw SpikeError("Screen recording permission unavailable")
+            for _ in 0..<60 {
+                if CGPreflightScreenCaptureAccess() {
+                    throw SpikeError("Screen recording permission granted. Restart required; relaunch the app.")
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+            if CGPreflightScreenCaptureAccess() {
+                throw SpikeError("Screen recording permission granted. Restart required; relaunch the app.")
+            }
+            throw SpikeError("Screen recording permission unavailable after 60 seconds; relaunch after granting permission")
         }
         let content: SCShareableContent
         do {
@@ -280,7 +414,7 @@ struct Metadata: Codable {
             }
         }
         let remote = AudioSink(url: options.out.appendingPathComponent("audio-remote.m4a"))
-        let local = AudioSink(url: options.out.appendingPathComponent("audio-self.m4a"))
+        let local = AudioSink(url: options.out.appendingPathComponent("audio-self.m4a"), inputChannel: options.inputChannel)
         let output = RemoteOutput(sink: remote)
         let config = SCStreamConfiguration()
         config.capturesAudio = true
@@ -295,9 +429,29 @@ struct Metadata: Codable {
             sampleHandlerQueue: DispatchQueue(label: "spike.remote"))
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        let selected = try selectInputDevice(options.inputDevice, from: inputDevices())
+        if options.inputDevice != nil {
+            guard let unit = input.audioUnit else { throw SpikeError("Microphone AudioUnit unavailable") }
+            var id = selected.id
+            let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global, 0, &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            guard status == noErr else { throw SpikeError("Cannot select input device: \(status)") }
+        }
+        guard let unit = input.audioUnit else { throw SpikeError("Microphone AudioUnit unavailable") }
+        var actualID = AudioDeviceID(0)
+        var deviceSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let deviceStatus = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &actualID, &deviceSize)
+        guard deviceStatus == noErr,
+            let actualDevice = try inputDevices().first(where: { $0.id == actualID }) else {
+            throw SpikeError("Cannot identify active input device: \(deviceStatus)")
+        }
+        let format = input.inputFormat(forBus: 0)
+        if let channel = options.inputChannel, channel > Int(format.channelCount) {
+            throw SpikeError("Input channel \(channel) exceeds \(format.channelCount) channels on \(actualDevice.name)")
+        }
         guard format.sampleRate > 0, format.channelCount > 0 else { throw SpikeError("No usable microphone input") }
-        let deviceName = inputDeviceName()
+        let deviceName = actualDevice.name
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, time in
             guard time.isHostTimeValid else { local.fail("Microphone host timestamp unavailable"); return }
             local.append(buffer, hostSeconds: AVAudioTime.seconds(forHostTime: time.hostTime))
@@ -326,7 +480,9 @@ struct Metadata: Codable {
             do { try await stream.stopCapture() } catch { errors.append(String(describing: error)) }
         }
         let (remoteMeta, remoteError) = remote.close()
-        let (localMeta, localError) = local.close()
+        var (localMeta, localError) = local.close()
+        localMeta.inputDeviceUID = actualDevice.uid
+        localMeta.inputChannel = options.inputChannel
         errors += [remoteError, localError].compactMap { $0 }
         if remoteMeta.frames == 0 { errors.append("No remote audio samples received") }
         if localMeta.frames == 0 { errors.append("No microphone audio samples received") }
