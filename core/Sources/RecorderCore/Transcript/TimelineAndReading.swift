@@ -25,8 +25,25 @@ enum SessionTimeline {
 /// Pure. Shifts each track's engine segments by its offset and merges into one total order:
 /// (start, end, track.mergeRank, original index). Deterministic, so tests can compare whole arrays.
 enum TimelineBuilder {
-    static func build(tracks: PerTrack<[EngineSegment]>, offsets: PerTrack<Double>) -> [TimelineSegment] {
-        fatalError("not implemented")
+    enum BuildError: Error, Sendable, Equatable { case missingOffset(Track) }
+
+    static func build(tracks: PerTrack<[EngineSegment]>, offsets: PerTrack<Double>) throws -> [TimelineSegment] {
+        var merged: [(TimelineSegment, Int)] = []
+        for (track, segments) in tracks.present {
+            guard !segments.isEmpty else { continue }
+            guard let offset = offsets[track] else { throw BuildError.missingOffset(track) }
+            for (index, value) in segments.enumerated() {
+                merged.append((TimelineSegment(start: value.start + offset, end: value.end + offset,
+                    speaker: track, text: value.text, avgLogprob: value.avgLogprob,
+                    noSpeechProb: value.noSpeechProb, compressionRatio: value.compressionRatio), index))
+            }
+        }
+        return merged.sorted {
+            if $0.0.start != $1.0.start { return $0.0.start < $1.0.start }
+            if $0.0.end != $1.0.end { return $0.0.end < $1.0.end }
+            if $0.0.speaker != $1.0.speaker { return $0.0.speaker.mergeRank < $1.0.speaker.mergeRank }
+            return $0.1 < $1.1
+        }.map(\.0)
     }
 }
 
@@ -45,6 +62,20 @@ struct ReadingPolicy: Sendable, Equatable {
     /// Merge consecutive same-speaker segments if the gap is below this and the merged line stays under `maxLineSeconds`.
     var coalesceGap = 2.0, maxLineSeconds = 45.0
     static let standard = ReadingPolicy()
+
+    func excludes(_ segment: TimelineSegment) -> Bool {
+        if segment.noSpeechProb > noSpeechMax && segment.avgLogprob < logprobMin { return true }
+        if segment.compressionRatio > compressionRatioMax { return true }
+        if dropSymbolOnly && !segment.text.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains) { return true }
+        func phrase(_ text: String) -> String {
+            var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            while let last = text.unicodeScalars.last, CharacterSet.punctuationCharacters.contains(last) {
+                text.unicodeScalars.removeLast()
+            }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return segment.avgLogprob < stockLogprobMax && stockHallucinations.contains { phrase($0) == phrase(segment.text) }
+    }
 }
 
 struct TranscriptLine: Sendable, Equatable {
@@ -56,7 +87,18 @@ struct TranscriptLine: Sendable, Equatable {
 enum TranscriptReader {
     /// filter -> coalesce. Pure.
     static func lines(from segments: [TimelineSegment], policy: ReadingPolicy = .standard) -> [TranscriptLine] {
-        fatalError("not implemented")
+        var result: [(line: TranscriptLine, end: Double)] = []
+        for segment in segments where !policy.excludes(segment) {
+            if let last = result.last, last.line.speaker == segment.speaker,
+               segment.start - last.end < policy.coalesceGap,
+               max(last.end, segment.end) - last.line.start < policy.maxLineSeconds {
+                result[result.count - 1].line.text += " " + segment.text
+                result[result.count - 1].end = max(last.end, segment.end)
+            } else {
+                result.append((TranscriptLine(start: segment.start, speaker: segment.speaker, text: segment.text), segment.end))
+            }
+        }
+        return result.map(\.line)
     }
 }
 
@@ -68,6 +110,41 @@ enum TranscriptRenderer {
     /// Timestamp is HH:MM:SS from timeline start, floor-ed, hours not capped at 24.
     /// Heading: "# {company} {title ?? "面接"}（{yyyy-MM-dd}）", date in meta.timeZone.
     static func render(meta: SessionMeta, segments: SegmentsFile, policy: ReadingPolicy = .standard) -> String {
-        fatalError("not implemented")
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: meta.timeZone) ?? TimeZone(secondsFromGMT: 0)!
+        formatter.dateFormat = "yyyy-MM-dd"
+        let date = formatter.string(from: meta.startedAt)
+        func heading(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        var lines = ["---", "type: interview-log", "company: \(quoted(meta.company))", "date: \(quoted(date))",
+                     "duration: \(quoted(timestamp(SessionTimeline.duration(of: meta))))", "---", "",
+                     "# \(heading(meta.company)) \(heading(meta.title ?? "面接"))（\(date)）", ""]
+        lines += TranscriptReader.lines(from: segments.segments, policy: policy).map {
+            "[\(timestamp($0.start)) \($0.speaker == .me ? "自分" : "相手")] \($0.text)"
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func timestamp(_ seconds: Double) -> String {
+        let whole = seconds.isFinite ? max(0, seconds.rounded(.down)) : 0
+        return String(format: "%02.0f:%02.0f:%02.0f", (whole / 3600).rounded(.down),
+                      (whole.truncatingRemainder(dividingBy: 3600) / 60).rounded(.down), whole.truncatingRemainder(dividingBy: 60))
+    }
+
+    private static func quoted(_ value: String) -> String {
+        var result = "\""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x22: result += "\\\""
+            case 0x5c: result += "\\\\"
+            case 0x0a: result += "\\n"
+            case 0x0d: result += "\\r"
+            case 0x09: result += "\\t"
+            case 0...0x1f, 0x7f...0x9f, 0x2028, 0x2029: result += String(format: "\\u%04X", scalar.value)
+            default: result.unicodeScalars.append(scalar)
+            }
+        }
+        return result + "\""
     }
 }

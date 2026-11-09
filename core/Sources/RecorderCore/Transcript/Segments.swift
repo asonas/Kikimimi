@@ -26,7 +26,28 @@ public enum EngineOutput {
     /// drops empty text, replaces NaN/inf with neutral values, clamps `end >= start` and both into `0...audioDuration`,
     /// rounds to milliseconds, and sorts by (start, end).
     public static func normalize(_ dto: [EngineSegmentDTO], audioDuration: Double) -> [EngineSegment] {
-        fatalError("not implemented")
+        let upper: Double? = audioDuration.isFinite && audioDuration > 0
+            ? (audioDuration * 1000).rounded(.down) / 1000 : nil
+        func time(_ value: Float, fallback: Double) -> Double {
+            let finite = value.isFinite ? Double(value) : fallback
+            let rounded = (max(0, finite) * 1000).rounded() / 1000
+            return upper.map { min($0, rounded) } ?? rounded
+        }
+        return dto.enumerated().compactMap { index, value -> (Int, EngineSegment)? in
+            let stripped = value.text.replacingOccurrences(of: #"<\|[^|]*\|>"#, with: "", options: .regularExpression)
+            let text = stripped.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !text.isEmpty else { return nil }
+            let start = time(value.start, fallback: 0)
+            let end = max(start, time(value.end, fallback: start))
+            return (index, EngineSegment(start: start, end: end, text: text,
+                avgLogprob: value.avgLogprob.isFinite ? Double(value.avgLogprob) : 0,
+                noSpeechProb: value.noSpeechProb.isFinite ? Double(value.noSpeechProb) : 0,
+                compressionRatio: value.compressionRatio.isFinite ? Double(value.compressionRatio) : 1))
+        }.sorted {
+            if $0.1.start != $1.1.start { return $0.1.start < $1.1.start }
+            if $0.1.end != $1.1.end { return $0.1.end < $1.1.end }
+            return $0.0 < $1.0
+        }.map(\.1)
     }
 }
 
