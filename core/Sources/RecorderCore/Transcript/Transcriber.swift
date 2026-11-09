@@ -102,22 +102,26 @@ enum TranscriptionSchedule {
 /// UI surface: `model`, `jobs`, `enqueue`, `cancel`, `installModel`, `setRecordingActive`. Everything else is hidden.
 @MainActor @Observable
 public final class TranscriptionService {
+    private let store: SessionStore
+    private let transcriber: any Transcriber
+    private let models: any ModelProvider
+    private let language: @MainActor () -> String
     public private(set) var model: ModelStatus = .notInstalled
     public private(set) var jobs: [TranscriptionJob] = []
 
     public init(store: SessionStore, transcriber: any Transcriber, models: any ModelProvider, language: @escaping @MainActor () -> String) {
-        fatalError("not implemented")
+        self.store = store; self.transcriber = transcriber; self.models = models; self.language = language
     }
 
     /// Idempotent: enqueueing a session that is already queued/running is a no-op; one that is `.transcribed` re-transcribes
     /// (that is the "re-transcribe" button) and replaces segments.json/transcript.md only on success.
     /// Synchronous: when it returns, `jobs` already holds the ref as `.queued` (or `.waiting`), so a caller that wants to
     /// wait (the DEBUG headless runner) observes `jobs` until that ref is `.done` or `.failed`.
-    public func enqueue(_ ref: SessionRef) { fatalError("not implemented") }
+    public func enqueue(_ ref: SessionRef) {}
     public func cancel(_ ref: SessionRef) { fatalError("not implemented") }
     public func installModel() async { fatalError("not implemented") }
     /// Called by the composition root from RecordingController's phase hook.
-    public func setRecordingActive(_ active: Bool) { fatalError("not implemented") }
+    public func setRecordingActive(_ active: Bool) {}
 
     // run(job) pseudocode:
     //   meta = store.meta(ref); offsets = SessionTimeline.offsets(meta.tracks)

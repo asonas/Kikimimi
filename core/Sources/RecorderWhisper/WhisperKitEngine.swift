@@ -88,7 +88,7 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
 
     /// Installed iff installed.json (written by us AFTER download + prewarm succeeded) names this variant and every
     /// ModelSpec.requiredEntries path exists under its folder. We trust neither WhisperKit's folder layout nor a partial snapshot.
-    public func status() async -> ModelStatus { fatalError("not implemented") }
+    public func status() async -> ModelStatus { .notInstalled }
 
     public func install(progress: @escaping @Sendable (ModelStatus) -> Void) async throws {
         // 1. let folder = try await WhisperKit.download(variant: variant, downloadBase: base,

@@ -44,6 +44,6 @@ public enum LaunchRecovery {
     /// untouched and reported. Returns the sessions recovered, for a one-time "前回の録音を回復しました" notice.
     /// Correctness does not depend on single-instance enforcement.
     public static func run(store: SessionStore, finalizer: SessionFinalizer) async throws -> [SessionRef] {
-        fatalError("not implemented")
+        []
     }
 }

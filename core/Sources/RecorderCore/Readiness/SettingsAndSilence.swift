@@ -30,8 +30,18 @@ public enum ModelSpec {
 
 @MainActor @Observable
 public final class SettingsStore {
-    public var settings: Settings { didSet { fatalError("persist to UserDefaults JSON; no-op if unchanged") } }
-    public init(defaults: UserDefaults = .standard) { fatalError("not implemented") }
+    private let defaults: UserDefaults
+    public var settings: Settings {
+        didSet {
+            guard settings != oldValue, let data = try? JSONEncoder().encode(settings) else { return }
+            defaults.set(data, forKey: "settings.v1")
+        }
+    }
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        settings = defaults.data(forKey: "settings.v1")
+            .flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
+    }
 }
 
 /// Pure silence/liveness tracking. The ONLY writer of a track's non-failure `TrackHealth`: it merges the 1 Hz level events

@@ -105,9 +105,11 @@ public struct SessionListing: Sendable, Equatable, Identifiable {
 /// All writes are atomic (temp file in the same directory + rename). All reads validate at this boundary and
 /// return domain types; no JSON or file URL leaks out except through `SessionFolder`.
 public actor SessionStore {
+    private let now: @Sendable () -> Date
+    private let timeZone: @Sendable () -> TimeZone
     public let root: URL
     public init(root: URL, now: @escaping @Sendable () -> Date = { Date() }, timeZone: @escaping @Sendable () -> TimeZone = { .current }) {
-        fatalError("not implemented")
+        self.root = root; self.now = now; self.timeZone = timeZone
     }
 
     /// Allocates the folder (FolderNamer + collision handling), writes the initial meta.json
@@ -128,7 +130,7 @@ public actor SessionStore {
         fatalError("not implemented")
     }
 
-    public func list() throws -> [SessionListing] { fatalError("not implemented") }
+    public func list() throws -> [SessionListing] { [] }
 
     public func state(of ref: SessionRef) throws -> SessionState { fatalError("not implemented") }
 

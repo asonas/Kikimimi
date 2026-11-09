@@ -85,12 +85,49 @@ public protocol PermissionProbe: Sendable {
 @MainActor @Observable
 public final class ReadinessModel {
     public private(set) var readiness: Readiness
+    private let probe: any PermissionProbe
+    private let devices: any InputDeviceCatalog
+    private let mic: @MainActor () -> MicPreference?
+    private let model: @MainActor () -> ModelStatus
+    private let relaunch: @MainActor () -> Void
+    private let preflightAtLaunch: Bool
+    private var requestedScreenBefore: Bool
+    private var refreshing = false
     public init(probe: any PermissionProbe, devices: any InputDeviceCatalog, mic: @escaping @MainActor () -> MicPreference?,
                 model: @escaping @MainActor () -> ModelStatus, requestedScreenBefore: Bool, relaunch: @escaping @MainActor () -> Void) {
-        fatalError("not implemented")
+        self.probe = probe
+        self.devices = devices
+        self.mic = mic
+        self.model = model
+        self.relaunch = relaunch
+        self.requestedScreenBefore = requestedScreenBefore
+        preflightAtLaunch = probe.screenPreflight()
+        readiness = Readiness(screen: .derive(preflightAtLaunch: preflightAtLaunch,
+            preflightNow: preflightAtLaunch, requestedBefore: requestedScreenBefore, probe: nil),
+            mic: probe.micStatus(), micDevice: .notChosen, model: model())
     }
-    public func refresh() async { fatalError("not implemented") }
-    public func requestScreenCapture() { fatalError("not implemented") }   // also persists requestedBefore = true
-    public func requestMicrophone() async { fatalError("not implemented") }
-    public func relaunchApp() { fatalError("not implemented") }            // only offered when .grantedNeedsRelaunch
+    public func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
+        let now = probe.screenPreflight()
+        let result = now ? await probe.screenProbe() : nil
+        readiness = Readiness(screen: .derive(preflightAtLaunch: preflightAtLaunch,
+            preflightNow: now, requestedBefore: requestedScreenBefore, probe: result),
+            mic: probe.micStatus(), micDevice: .resolve(mic(), available: (try? devices.inputDevices()) ?? []),
+            model: model())
+    }
+    // The Setup action persists the flag through SettingsStore before invoking the OS request.
+    public func requestScreenCapture() {
+        requestedScreenBefore = true
+        probe.requestScreen()
+    }
+    public func requestMicrophone() async {
+        _ = await probe.requestMic()
+        await refresh()
+    }
+    public func relaunchApp() {
+        guard readiness.screen == .grantedNeedsRelaunch else { return }
+        relaunch()
+    }
 }

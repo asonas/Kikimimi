@@ -83,16 +83,29 @@ struct AACFinalizer: AudioFinalizer {
 
 /// Phase 0 `inputDevices()` behind the port: AudioObject enumeration with input stream config, name, UID, default flag.
 struct CoreAudioInputDevices: InputDeviceCatalog {
-    func inputDevices() throws -> [InputDeviceInfo] { fatalError("not implemented") }
+    func inputDevices() throws -> [InputDeviceInfo] { [] } // Replaced by the device-catalog implementation commit.
 }
 
 /// CGPreflightScreenCaptureAccess / CGRequestScreenCaptureAccess / AVCaptureDevice mic status / SCShareableContent probe.
 struct SystemPermissionProbe: PermissionProbe {
-    func screenPreflight() -> Bool { fatalError("not implemented") }
-    func screenProbe() async -> ScreenCaptureAccess.Probe { fatalError("not implemented") }
-    func requestScreen() { fatalError("not implemented") }
-    func micStatus() -> MicAccess { fatalError("not implemented") }
-    func requestMic() async -> Bool { fatalError("not implemented") }
+    func screenPreflight() -> Bool { CGPreflightScreenCaptureAccess() }
+    func screenProbe() async -> ScreenCaptureAccess.Probe {
+        do {
+            _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            return .succeeded
+        } catch { return .failed(code: (error as NSError).code) }
+    }
+    func requestScreen() { _ = CGRequestScreenCaptureAccess() }
+    func micStatus() -> MicAccess {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined: .notDetermined
+        case .denied: .denied
+        case .restricted: .restricted
+        case .authorized: .authorized
+        @unknown default: .restricted
+        }
+    }
+    func requestMic() async -> Bool { await AVCaptureDevice.requestAccess(for: .audio) }
 }
 
 /// Mic + remote, each through TrackRecorder. If one source throws on start, the other is stopped and the error propagates

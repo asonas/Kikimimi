@@ -20,6 +20,10 @@ public enum StartError: Error, Sendable, Equatable {
 /// Three files: this one, RecordingPhase.swift (pure policy), SessionFinalizer.swift (shared with recovery).
 @MainActor @Observable
 public final class RecordingController {
+    private let deps: Dependencies
+    private let readiness: @MainActor () -> Readiness
+    private let mic: @MainActor () -> MicPreference?
+    private let hooks: Hooks
     public private(set) var phase: RecordingPhase = .idle
     /// Latest peak per track for the meter. nil when not recording.
     public private(set) var levels: TrackPair<Float>?
@@ -47,7 +51,7 @@ public final class RecordingController {
 
     public init(_ deps: Dependencies, readiness: @escaping @MainActor () -> Readiness,
                 mic: @escaping @MainActor () -> MicPreference?, hooks: Hooks = Hooks()) {
-        fatalError("not implemented")
+        self.deps = deps; self.readiness = readiness; self.mic = mic; self.hooks = hooks
     }
 
     /// Validates (throws StartError, creates nothing on failure before step 4):
