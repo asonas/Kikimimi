@@ -306,3 +306,27 @@ private actor FakeControllerAudio: AudioFinalizer {
     #expect(try await rig.store.list().isEmpty)
     #expect(await rig.audio.calls == 0)
 }
+
+@Test @MainActor func terminationWaitsForQuitAndNextLaunchRecoversWithoutAutoTranscription() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let controller = rig.controller()
+    try await controller.start(controllerDraft)
+    let coordinator = TerminationCoordinator()
+    var replies = 0
+    coordinator.request(stop: { await controller.stopForQuit() }, sleep: { _ in throw CancellationError() }, reply: {
+        #expect(controller.phase == .idle)
+        replies += 1
+    })
+    await waitUntil { replies == 1 }
+    #expect(await rig.audio.calls == 0)
+    #expect(rig.finalized.isEmpty)
+    let listing = try #require(try await rig.store.list().first)
+    #expect(listing.state == .needsFinalize)
+    #expect(!CaptureLease.isHeld(listing.ref.folder.lock))
+    #expect(try await rig.store.meta(of: listing.ref).capture == .finished(endedAt: controllerNow.addingTimeInterval(10), reason: .quit))
+    let recovered = try await LaunchRecovery.run(store: rig.store, finalizer: .init(store: rig.store, audio: rig.audio))
+    #expect(recovered.map(\.id) == [listing.id])
+    #expect(try await rig.store.state(of: listing.ref) == .readyToTranscribe)
+    #expect(try await rig.store.segments(of: listing.ref) == nil)
+    #expect(rig.finalized.isEmpty)
+}

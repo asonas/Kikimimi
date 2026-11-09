@@ -44,7 +44,7 @@ struct NewRecordingView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(company.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedSource == nil ||
-                          !env.readiness.readiness.canRecord || env.recorder.phase.isCapturing)
+                          !env.readiness.readiness.canRecord || env.recorder.phase.isCapturing || env.termination.requested)
             }
         }
         .formStyle(.grouped)

@@ -15,6 +15,7 @@ final class AppEnvironment {
     let readiness: ReadinessModel
     let recorder: RecordingController
     let transcription: TranscriptionService
+    let termination = TerminationCoordinator()
     /// Launch recovery plus the first readiness refresh. The UI does not wait for it; the headless runner does.
     let launched: Task<Void, Never>
 
