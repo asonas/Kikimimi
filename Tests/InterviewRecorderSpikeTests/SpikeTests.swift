@@ -65,11 +65,11 @@ import Testing
     #expect(try !Options([]).ignorePreflight)
 }
 
-@Test func writesAndFinalizesMonoAACWithFirstTimestamp() throws {
+@Test func writesAndFinalizesMonoPCMCAFWithFirstTimestamp() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let url = directory.appendingPathComponent("audio.m4a")
+    let url = directory.appendingPathComponent("audio.caf")
     let sink = AudioSink(url: url)
     let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32,
         sampleRate: 48_000, channels: 2, interleaved: false))
@@ -86,10 +86,16 @@ import Testing
     #expect(metadata.firstSampleHostTimeSeconds == 123)
     #expect(metadata.frames == 48_000)
     #expect(metadata.sourceChannels == 2)
+    #expect(metadata.file == "audio.caf")
+    #expect(metadata.container == "caf")
+    #expect(metadata.codec == "lpcm")
+    #expect(metadata.bitsPerChannel == 16)
     let file = try AVAudioFile(forReading: url)
     #expect(file.fileFormat.channelCount == 1)
-    #expect(file.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatMPEG4AAC)
-    #expect(file.length > 0)
+    #expect(file.fileFormat.streamDescription.pointee.mFormatID == kAudioFormatLinearPCM)
+    #expect(file.fileFormat.streamDescription.pointee.mBitsPerChannel == 16)
+    #expect(file.fileFormat.sampleRate == 48_000)
+    #expect(file.length == 48_000)
     let decoded = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4800))
     try file.read(into: decoded)
     #expect(decoded.frameLength > 0)

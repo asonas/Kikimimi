@@ -98,15 +98,24 @@ struct Options {
 }
 
 struct TrackMetadata: Codable {
+    var file: String?
+    var container = "caf"
+    var codec = "lpcm"
+    var bitsPerChannel = 16
     var inputDeviceUID: String?
     var inputChannel: Int?
 
     enum CodingKeys: String, CodingKey {
+        case file, container, codec, bitsPerChannel
         case inputDeviceUID, inputChannel, firstSampleHostTimeSeconds, sampleRate, sourceChannels, channels, frames
     }
 
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(file, forKey: .file)
+        try values.encode(container, forKey: .container)
+        try values.encode(codec, forKey: .codec)
+        try values.encode(bitsPerChannel, forKey: .bitsPerChannel)
         try values.encode(inputDeviceUID, forKey: .inputDeviceUID)
         try values.encode(inputChannel, forKey: .inputChannel)
         try values.encode(firstSampleHostTimeSeconds, forKey: .firstSampleHostTimeSeconds)
@@ -135,6 +144,7 @@ final class AudioSink: @unchecked Sendable {
     init(url: URL, inputChannel: Int? = nil) {
         self.url = url
         self.inputChannel = inputChannel
+        self.metadata.file = url.lastPathComponent
     }
 
     func append(_ buffer: AVAudioPCMBuffer, hostSeconds: Double) {
@@ -159,10 +169,13 @@ final class AudioSink: @unchecked Sendable {
             }
             if file == nil {
                 file = try AVAudioFile(forWriting: url, settings: [
-                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVFormatIDKey: kAudioFormatLinearPCM,
                     AVSampleRateKey: monoFormat.sampleRate,
                     AVNumberOfChannelsKey: 1,
-                    AVEncoderBitRateKey: 64_000
+                    AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false,
+                    AVLinearPCMIsBigEndianKey: false,
+                    AVLinearPCMIsNonInterleaved: false
                 ], commonFormat: .pcmFormatFloat32, interleaved: false)
                 metadata.firstSampleHostTimeSeconds = hostSeconds
                 metadata.sampleRate = buffer.format.sampleRate
@@ -189,7 +202,7 @@ final class AudioSink: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         closed = true
-        file = nil // AVAudioFile closes/finalizes the AAC container on release.
+        file = nil // Flush and close the PCM CAF file on release.
         return (metadata, failure)
     }
 }
@@ -408,13 +421,13 @@ struct Metadata: Codable {
             filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         }
         try FileManager.default.createDirectory(at: options.out, withIntermediateDirectories: true)
-        for name in ["audio-remote.m4a", "audio-self.m4a", "meta.json"] {
+        for name in ["audio-remote.caf", "audio-self.caf", "meta.json"] {
             guard !FileManager.default.fileExists(atPath: options.out.appendingPathComponent(name).path) else {
                 throw SpikeError("Refusing to overwrite existing output: \(name)")
             }
         }
-        let remote = AudioSink(url: options.out.appendingPathComponent("audio-remote.m4a"))
-        let local = AudioSink(url: options.out.appendingPathComponent("audio-self.m4a"), inputChannel: options.inputChannel)
+        let remote = AudioSink(url: options.out.appendingPathComponent("audio-remote.caf"))
+        let local = AudioSink(url: options.out.appendingPathComponent("audio-self.caf"), inputChannel: options.inputChannel)
         let output = RemoteOutput(sink: remote)
         let config = SCStreamConfiguration()
         config.capturesAudio = true
