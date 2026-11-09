@@ -63,6 +63,11 @@ public enum LaunchRecovery {
     public static func run(store: SessionStore, finalizer: SessionFinalizer) async throws -> [SessionRef] {
         var recovered: [SessionRef] = []
         for listing in try await store.list() {
+            if listing.state == .transcribed, !FileManager.default.fileExists(atPath: listing.ref.folder.transcript.path) {
+                do { try await store.rerenderTranscript(listing.ref) }
+                catch { logFailure() }
+                continue
+            }
             guard listing.state == .needsFinalize,
                   let lease = CaptureLease.acquire(listing.ref.folder.lock) else { continue }
             defer { lease.release() }

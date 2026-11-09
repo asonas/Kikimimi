@@ -157,9 +157,16 @@ public struct SessionListing: Sendable, Equatable, Identifiable {
 public actor SessionStore {
     private let now: @Sendable () -> Date
     private let timeZone: @Sendable () -> TimeZone
+    private let atomicWrite: @Sendable (Data, URL) throws -> Void
     public let root: URL
     public init(root: URL, now: @escaping @Sendable () -> Date = { Date() }, timeZone: @escaping @Sendable () -> TimeZone = { .current }) {
+        self.init(root: root, now: now, timeZone: timeZone, atomicWrite: { try $0.write(to: $1, options: .atomic) })
+    }
+
+    init(root: URL, now: @escaping @Sendable () -> Date = { Date() }, timeZone: @escaping @Sendable () -> TimeZone = { .current },
+         atomicWrite: @escaping @Sendable (Data, URL) throws -> Void) {
         self.root = root; self.now = now; self.timeZone = timeZone
+        self.atomicWrite = atomicWrite
     }
 
     /// Allocates the folder (FolderNamer + collision handling), writes the initial meta.json
@@ -261,11 +268,47 @@ public actor SessionStore {
     /// Writes segments.json, then renders and writes transcript.md (existing transcript.md moves to transcript.prev.md first).
     /// The order matters: transcript.md is derived, so a crash between the two leaves a stale-but-valid state
     /// that `rerender` (same function, same inputs) repairs.
-    public func saveTranscription(_ ref: SessionRef, _ file: SegmentsFile) throws { fatalError("not implemented") }
+    public func saveTranscription(_ ref: SessionRef, _ file: SegmentsFile) throws {
+        let meta = try writableMeta(ref)
+        guard file.schemaVersion <= SegmentsFile.currentSchemaVersion else { throw CocoaError(.fileReadCorruptFile) }
+        try refuseNewerSegments(ref)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let segments = try encoder.encode(file)
+        let markdown = Data(TranscriptRenderer.render(meta: meta, segments: file).utf8)
+        let previous = FileManager.default.fileExists(atPath: ref.folder.transcript.path)
+            ? try Data(contentsOf: ref.folder.transcript) : nil
+        try Task.checkCancellation()
+        // Once this synchronous commit begins, finish even if capture starts concurrently.
+        try atomicWrite(segments, ref.folder.segments)
+        if let previous { try atomicWrite(previous, ref.folder.transcriptBackup) }
+        try atomicWrite(markdown, ref.folder.transcript)
+    }
 
     /// Re-renders transcript.md from the existing segments.json + meta.json with the current ReadingPolicy. No engine involved.
     /// Used by LaunchRecovery for `.transcribed` folders whose transcript.md is missing, and after a ReadingPolicy change.
-    public func rerenderTranscript(_ ref: SessionRef) throws { fatalError("not implemented") }
+    public func rerenderTranscript(_ ref: SessionRef) throws {
+        let meta = try writableMeta(ref)
+        guard let file = try segments(of: ref) else { throw CocoaError(.fileNoSuchFile) }
+        let markdown = Data(TranscriptRenderer.render(meta: meta, segments: file).utf8)
+        try Task.checkCancellation()
+        try atomicWrite(markdown, ref.folder.transcript)
+    }
+
+    private func writableMeta(_ ref: SessionRef) throws -> SessionMeta {
+        guard !CaptureLease.isHeld(ref.folder.lock) else { throw CocoaError(.fileWriteNoPermission) }
+        return try meta(of: ref)
+    }
+
+    private func refuseNewerSegments(_ ref: SessionRef) throws {
+        struct Header: Decodable { let schemaVersion: Int }
+        guard FileManager.default.fileExists(atPath: ref.folder.segments.path) else { return }
+        let data = try Data(contentsOf: ref.folder.segments)
+        if let header = try? JSONDecoder().decode(Header.self, from: data), header.schemaVersion > SegmentsFile.currentSchemaVersion {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+    }
 
     /// Deletes a folder that has no audio at all (start failed after `create`). Refuses otherwise.
     public func discardIfEmpty(_ ref: SessionRef) throws {

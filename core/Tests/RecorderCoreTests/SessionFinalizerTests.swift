@@ -146,7 +146,7 @@ private func recoverySession(_ store: SessionStore) async throws -> (SessionRef,
     #expect(!CaptureLease.isHeld(bad.folder.lock))
 }
 
-@Test func launchRecoveryLeavesTranscribedAndNewerSchemaUntouched() async throws {
+@Test func launchRecoveryRerendersTranscribedWithoutEngineAndLeavesNewerSchemaUntouched() async throws {
     let (root, store, audio) = try recoverySetup(); defer { try? FileManager.default.removeItem(at: root) }
     let (ref, lease) = try await recoverySession(store)
     try await store.update(ref) { $0.capture = .finished(endedAt: recoveryStart, reason: .user) }
@@ -158,7 +158,7 @@ private func recoverySession(_ store: SessionStore) async throws -> (SessionRef,
     try encoder.encode(segments).write(to: ref.folder.segments)
     lease.release()
     #expect(try await LaunchRecovery.run(store: store, finalizer: .init(store: store, audio: audio)).isEmpty)
-    #expect(!FileManager.default.fileExists(atPath: ref.folder.transcript.path))
+    #expect(FileManager.default.fileExists(atPath: ref.folder.transcript.path))
     let future = Data(#"{"schemaVersion":2}"#.utf8); try future.write(to: ref.folder.meta)
     #expect(try await LaunchRecovery.run(store: store, finalizer: .init(store: store, audio: audio)).isEmpty)
     #expect(try Data(contentsOf: ref.folder.meta) == future)
