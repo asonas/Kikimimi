@@ -27,6 +27,12 @@ public final class RecordingController {
     public private(set) var phase: RecordingPhase = .idle
     /// Latest peak per track for the meter. nil when not recording.
     public private(set) var levels: TrackPair<Float>?
+    private var running: (any RunningCapture)?
+    private var lease: CaptureLease?
+    private var eventTask: Task<Void, Never>?
+    private var stoppingTask: Task<Void, Never>?
+    private var monitor = SilenceMonitor()
+    private var phaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     public struct Dependencies: Sendable {
         public var store: SessionStore
@@ -35,10 +41,21 @@ public final class RecordingController {
         public var finalizer: SessionFinalizer
         public var app: AppInfo
         public var now: @Sendable () -> Date
+        public var availableDiskBytes: @Sendable (URL) throws -> Int64
         public init(store: SessionStore, backend: any CaptureBackend, devices: any InputDeviceCatalog,
-                    finalizer: SessionFinalizer, app: AppInfo, now: @escaping @Sendable () -> Date = { Date() }) {
+                    finalizer: SessionFinalizer, app: AppInfo, now: @escaping @Sendable () -> Date = { Date() },
+                    availableDiskBytes: @escaping @Sendable (URL) throws -> Int64 = { url in
+                        var existing = url
+                        while !FileManager.default.fileExists(atPath: existing.path), existing.path != "/" {
+                            existing.deleteLastPathComponent()
+                        }
+                        let values = try existing.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                        guard let bytes = values.volumeAvailableCapacityForImportantUsage else { throw CocoaError(.fileReadUnknown) }
+                        return bytes
+                    }) {
             self.store = store; self.backend = backend; self.devices = devices
             self.finalizer = finalizer; self.app = app; self.now = now
+            self.availableDiskBytes = availableDiskBytes
         }
     }
 
@@ -68,17 +85,147 @@ public final class RecordingController {
     ///     (the one owner of non-failure TrackHealth) and become .trackHealthChanged; .trackFailed is persisted, then sent
     ///
     /// The DEBUG headless runner (App/HeadlessRunner.swift) calls exactly `start` and `stop`, like the Start/Stop buttons.
-    public func start(_ draft: SessionDraft) async throws(StartError) { fatalError("not implemented") }
+    public func start(_ draft: SessionDraft) async throws(StartError) {
+        guard phase == .idle else { throw .alreadyActive }
+        var draft = draft
+        draft.company = draft.company.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !draft.company.isEmpty else { throw .companyEmpty }
+        _ = transition(.startRequested(draft))
+        var created: SessionRef?
+        do {
+            let blockers = readiness().blockers
+            guard blockers.isEmpty else { throw StartError.notReady(blockers) }
+            let device: InputDeviceInfo, channel: Int?
+            switch MicResolution.resolve(mic(), available: try deps.devices.inputDevices()) {
+            case .use(let selected, let selectedChannel): device = selected; channel = selectedChannel
+            case .notChosen: throw StartError.notReady([.micNotChosen])
+            case .deviceMissing(let preference): throw StartError.micMissing(preference)
+            case let .channelOutOfRange(selected, requested):
+                throw StartError.micChannelOutOfRange(device: selected.name, requested: requested, available: selected.inputChannels)
+            }
+            if case .app(let id, let name) = draft.remote {
+                let candidates = try await deps.backend.runningRemoteCandidates()
+                guard let candidate = candidates.first(where: {
+                    if case .app(let candidateID, _) = $0 { return candidateID == id }; return false
+                }) else { throw StartError.remoteAppNotRunning(name: name) }
+                draft.remote = candidate
+            }
+            let free = try deps.availableDiskBytes(deps.store.root)
+            guard free >= 5_000_000_000 else { throw StartError.insufficientDisk(availableGB: Double(free) / 1_000_000_000) }
+            let remote: TrackSource
+            switch draft.remote {
+            case .app(let id, let name): remote = .app(bundleID: id, name: name)
+            case .allSystemAudio: remote = .allSystemAudio
+            }
+            let allocation = try await deps.store.create(draft,
+                mic: .mic(deviceUID: device.uid, deviceName: device.name, channel: channel, deviceChannels: device.inputChannels),
+                remote: remote, app: deps.app)
+            created = allocation.ref; lease = allocation.lease
+            let ref = allocation.ref, store = deps.store
+            let plan = CapturePlan(folder: ref.folder, mic: (device, channel), remote: draft.remote) { track, host in
+                try await store.update(ref) { $0.tracks[track]?.firstSampleHostSeconds = host }
+            }
+            let capture: any RunningCapture
+            do { capture = try await deps.backend.start(plan) }
+            catch { throw StartError.captureFailed(String(describing: error)) }
+            running = capture
+            monitor = SilenceMonitor(); levels = .init(both: -120)
+            let startedAt = try await store.meta(of: ref).startedAt
+            _ = transition(.prepared(ref, startedAt: startedAt))
+            eventTask = Task { [weak self] in
+                for await event in capture.events { await self?.handle(event, ref: ref) }
+            }
+        } catch {
+            if let running { _ = await running.stop(); self.running = nil }
+            if let created { try? await deps.store.discardIfEmpty(created) }
+            lease?.release(); lease = nil; levels = nil
+            _ = transition(.prepareFailed)
+            if let error = error as? StartError { throw error }
+            throw .storage(String(describing: error))
+        }
+    }
 
     /// User stop. Returns when the phase is back to .idle (finalize included).
-    public func stop() async { fatalError("not implemented") }
+    public func stop() async { await stop(reason: .user) }
 
     /// App quit. Handles every phase so `applicationShouldTerminate` can always reply:
     /// idle -> returns at once; preparing -> awaits the in-flight `start` (it ends in recording or idle), then continues as
     /// recording; recording -> stop capture, close spools, write endedAt(.quit), release the lease, skip the AAC encode;
     /// stopping -> awaits it. The next launch's recovery finalizes with the same code path. Bounded work: well under a second
     /// (the caller also applies a 10 s timeout and replies regardless).
-    public func stopForQuit() async { fatalError("not implemented") }
+    public func stopForQuit() async { await stop(reason: .quit) }
+
+    private func stop(reason: EndReason) async {
+        while case .preparing = phase {
+            await withCheckedContinuation { phaseWaiters.append($0) }
+        }
+        if case .recording = phase { beginStop(reason) }
+        await stoppingTask?.value
+    }
+
+    private func beginStop(_ reason: EndReason) {
+        let effects = transition(.stopRequested(reason))
+        if effects.contains(.stopCapture(reason: reason)) { stoppingTask = Task { await finishStop() } }
+    }
+
+    private func finishStop() async {
+        guard case .stopping(let stopping) = phase else { return }
+        let diagnostics = await running?.stop() ?? .init()
+        await eventTask?.value
+        eventTask = nil; running = nil
+        defer { lease?.release(); lease = nil; levels = nil }
+        do {
+            let endedAt = deps.now()
+            try await deps.store.update(stopping.ref) { meta in
+                meta.capture = .finished(endedAt: endedAt, reason: stopping.reason)
+                for (track, _) in meta.tracks.present { meta.tracks[track]?.diagnostics = diagnostics[track] }
+            }
+            let effects = transition(.captureStopped)
+            if effects.contains(.finalize(stopping.ref, reason: stopping.reason)) {
+                try await deps.finalizer.run(stopping.ref, reason: stopping.reason, clockDiagnostics: diagnostics, endedAt: endedAt)
+                for effect in transition(.finalizeSucceeded) {
+                    if case .enqueueTranscription(let ref) = effect { hooks.sessionFinalized(ref) }
+                }
+            }
+        } catch { _ = transition(.finalizeFailed) }
+    }
+
+    private func handle(_ event: CaptureEvent, ref: SessionRef) async {
+        let health: TrackHealth?
+        let track: Track
+        switch phase {
+        case .recording(let value) where value.ref == ref: break
+        case .stopping(let value) where value.ref == ref: break
+        default: return
+        }
+        switch event {
+        case .level(let t, let peak):
+            track = t; levels?[t] = peak
+            health = monitor.ingest(t, peakDBFS: peak, at: ProcessInfo.processInfo.systemUptime)
+        case .digitalSilence(let t, let active):
+            track = t; health = monitor.digitalSilence(t, active: active)
+        case .trackFailed(let t, let failure):
+            track = t
+            do { try await deps.store.update(ref) { $0.tracks[t]?.failure = failure } }
+            catch { FileHandle.standardError.write(Data("Could not persist track failure\n".utf8)) }
+            health = .failed(failure)
+        }
+        if let health {
+            let effects = transition(.trackHealthChanged(track, health))
+            if effects.contains(.stopCapture(reason: .captureLost)) { stoppingTask = Task { await finishStop() } }
+        }
+    }
+
+    @discardableResult
+    private func transition(_ event: RecordingEvent) -> [RecordingEffect] {
+        let result = phase.applying(event)
+        guard result.kind == .moved else { return [] }
+        phase = result.phase
+        hooks.phaseChanged(phase)
+        let waiters = phaseWaiters; phaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        return result.effects
+    }
 
     // send(event): let t = phase.applying(event); if t.kind == .illegal -> log + return; phase = t.phase;
     // hooks.phaseChanged(phase); for e in t.effects { await perform(e) }

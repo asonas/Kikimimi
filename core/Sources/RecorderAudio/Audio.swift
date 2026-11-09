@@ -53,7 +53,7 @@ final class MicSource: AudioSource {
 ///       peak = max(peak, chunk.peak) ; emit .level(track, peak) once per second of audio, then reset peak
 ///   }   // thrown error => spool.close(); emit .trackFailed(track, mapped failure)
 actor TrackRecorder {
-    init(track: Track, source: any AudioSource, folder: SessionFolder, willWriteFirstSample: @escaping @Sendable (Track, Double) async -> Void,
+    init(track: Track, source: any AudioSource, folder: SessionFolder, willWriteFirstSample: @escaping @Sendable (Track, Double) async throws -> Void,
          emit: @escaping @Sendable (CaptureEvent) -> Void) {}
     func run() async { fatalError("not implemented") }
     func stop() async -> ClockDiagnostics? { fatalError("not implemented") }

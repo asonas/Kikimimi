@@ -53,9 +53,9 @@ public struct CapturePlan: Sendable {
     public var remote: RemoteSource
     /// Write-ahead hook. The backend MUST `await` this before appending the first spool chunk of a track.
     /// The controller implements it as `store.update { meta.tracks[t].firstSampleHostSeconds = host }`.
-    public var willWriteFirstSample: @Sendable (Track, _ hostSeconds: Double) async -> Void
+    public var willWriteFirstSample: @Sendable (Track, _ hostSeconds: Double) async throws -> Void
     public init(folder: SessionFolder, mic: (device: InputDeviceInfo, channel: Int?), remote: RemoteSource,
-                willWriteFirstSample: @escaping @Sendable (Track, Double) async -> Void) {
+                willWriteFirstSample: @escaping @Sendable (Track, Double) async throws -> Void) {
         self.folder = folder; self.mic = mic; self.remote = remote; self.willWriteFirstSample = willWriteFirstSample
     }
 }
