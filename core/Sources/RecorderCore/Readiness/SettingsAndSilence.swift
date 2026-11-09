@@ -55,8 +55,29 @@ struct SilenceMonitor: Sendable {
     private var lastAbove: [Track: TimeInterval] = [:]
     private var digital: Set<Track> = []
     private var current: [Track: TrackHealth] = [:]
+    private var level: [Track: TrackHealth] = [:]
     /// `at` is any monotonic seconds value (host seconds). Returns the new health if it changed.
-    mutating func ingest(_ track: Track, peakDBFS: Float, at: TimeInterval) -> TrackHealth? { fatalError("not implemented") }
+    mutating func ingest(_ track: Track, peakDBFS: Float, at: TimeInterval) -> TrackHealth? {
+        guard at.isFinite, !peakDBFS.isNaN else { return nil }
+        if peakDBFS > thresholdDBFS {
+            lastAbove[track] = at
+            level[track] = .live
+        } else {
+            if lastAbove[track] == nil { lastAbove[track] = at }
+            if at - lastAbove[track]! >= silentAfter { level[track] = .silent }
+        }
+        return emitIfChanged(track)
+    }
     /// From `CaptureEvent.digitalSilence`. Returns the new health if it changed.
-    mutating func digitalSilence(_ track: Track, active: Bool) -> TrackHealth? { fatalError("not implemented") }
+    mutating func digitalSilence(_ track: Track, active: Bool) -> TrackHealth? {
+        if active { digital.insert(track) } else { digital.remove(track) }
+        return emitIfChanged(track)
+    }
+
+    private mutating func emitIfChanged(_ track: Track) -> TrackHealth? {
+        let health: TrackHealth = digital.contains(track) ? .digitallySilent : (level[track] ?? .waitingForAudio)
+        guard health != (current[track] ?? .waitingForAudio) else { return nil }
+        current[track] = health
+        return health
+    }
 }
