@@ -28,7 +28,8 @@ let package = Package(
         ]),
         .testTarget(name: "RecorderCoreTests", dependencies: ["RecorderCore"], resources: [.copy("Fixtures")]),
         .testTarget(name: "RecorderAudioTests", dependencies: ["RecorderAudio", "RecorderCore"]),
-        .testTarget(name: "RecorderWhisperTests", dependencies: ["RecorderWhisper", "RecorderCore"]),
+        .testTarget(name: "RecorderWhisperTests", dependencies: ["RecorderWhisper", "RecorderCore"],
+                    exclude: ["generate-fixtures.sh"], resources: [.copy("Fixtures")]),
     ],
     swiftLanguageModes: [.v6]
 )

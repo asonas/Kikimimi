@@ -4,7 +4,7 @@
 //   DecodingOptions.language/detectLanguage/skipSpecialTokens/chunkingStrategy are settable; WhisperKitConfig(modelFolder:verbose:prewarm:load:download:);
 //   unloadModels() async.
 //   Compiles with a plain `import WhisperKit` (no @preconcurrency needed) because the non-Sendable WhisperKit object never
-//   leaves this actor.
+//   leaves the private session actor.
 // Read from WhisperKit 1.1.1 source (candidate A, design time): on the `.incremental` loading path, segment times are
 //   corrected to absolute file time (`updateSegmentTimings`), and no segment callback is passed, so in-track progress is coarse.
 // NOT verifiable by compiling (the gated integration test must establish them): Task cancellation latency inside transcribe;
@@ -23,7 +23,11 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
     private let variant: String
     private let download: @Sendable (String, URL, @escaping @Sendable (Double) -> Void) async throws -> URL
     private let prewarm: @Sendable (URL, URL) async throws -> URL
+    private let sessionLoader: @Sendable (URL, URL) async throws -> any WhisperSession
+    private let sampleInterval: Duration
     private var installation: Task<Void, any Error>?
+    private var transcribing = false
+    private(set) var isModelLoaded = false
 
     init(base: URL, variant: String) {
         self.init(base: base, variant: variant, download: { variant, base, progress in
@@ -33,8 +37,13 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
 
     init(base: URL, variant: String,
          download: @escaping @Sendable (String, URL, @escaping @Sendable (Double) -> Void) async throws -> URL,
-         prewarm: @escaping @Sendable (URL, URL) async throws -> URL) {
+         prewarm: @escaping @Sendable (URL, URL) async throws -> URL,
+         sampleInterval: Duration = .milliseconds(500),
+         sessionLoader: @escaping @Sendable (URL, URL) async throws -> any WhisperSession = {
+             try await LiveWhisperSession(folder: $0, tokenizerFolder: $1)
+         }) {
         self.base = base; self.variant = variant; self.download = download; self.prewarm = prewarm
+        self.sampleInterval = sampleInterval; self.sessionLoader = sessionLoader
     }
 
     /// Engine policy, owned here: remote then self, one at a time with one model instance (two large-v3-turbo instances
@@ -51,53 +60,64 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
 
     public func transcribe(_ request: TranscribeRequest,
                            progress: @escaping @Sendable (Track, Double) -> Void) async throws -> PerTrack<[EngineSegmentDTO]> {
-        // Load per session, unload before returning on every path. `download: false`: transcription can never reach the network.
-        let kit = try await load()
+        guard !transcribing else { throw TranscriberError.engine("Transcription already active") }
+        transcribing = true
+        defer { transcribing = false }
+        var session: (any WhisperSession)?
         do {
-            let out = try await run(kit, request, progress: progress)
-            await kit.unloadModels()
+            try Task.checkCancellation()
+            let loaded = try await load()
+            session = loaded
+            isModelLoaded = true
+            try Task.checkCancellation()
+            let out = try await run(loaded, request, progress: progress)
+            await loaded.unload()
+            isModelLoaded = false
+            try Task.checkCancellation()
             return out
         } catch {
-            await kit.unloadModels()
-            throw (error is CancellationError) ? TranscriberError.cancelled : error
+            if isModelLoaded, let session { await session.unload() }
+            isModelLoaded = false
+            throw (error is CancellationError || Task.isCancelled) ? TranscriberError.cancelled : error
         }
     }
 
-    private func run(_ kit: WhisperKit, _ request: TranscribeRequest,
+    private func run(_ session: any WhisperSession, _ request: TranscribeRequest,
                      progress: @escaping @Sendable (Track, Double) -> Void) async throws -> PerTrack<[EngineSegmentDTO]> {
-        var options = DecodingOptions()
-        options.language = request.language
-        options.detectLanguage = false          // a self track that starts in silence must not be language-sniffed
-        options.skipSpecialTokens = true
-        options.chunkingStrategy = .vad         // skips long silences: fewer hallucinations, faster
-        // Streams the file instead of holding it as one 16 kHz buffer (a 90-minute track would be ~346 MB).
-        let input = AudioInputOptions(audioLoadingMode: .incremental)
-
         var out = PerTrack<[EngineSegmentDTO]>()
         for track in Self.trackOrder(request.audio) {
             try Task.checkCancellation()
             guard let url = request.audio[track] else { continue }
             progress(track, 0)
-            // TODO progress: sample kit.progress.fractionCompleted at 2 Hz while this call runs and report progress(track, f);
-            //      Core clamps it monotone. Coarse on the incremental path (no segment callback); commit 19 measures it.
-            let results = try await kit.transcribe(audioPath: url.path, audioInputOptions: input, decodeOptions: options)
-            try Task.checkCancellation()
-            // One-line copy. All interpretation is EngineOutput.normalize in Core (pure, tested).
-            out[track] = results.flatMap(\.segments).map {
-                EngineSegmentDTO(start: $0.start, end: $0.end, text: $0.text,
-                                 avgLogprob: $0.avgLogprob, noSpeechProb: $0.noSpeechProb, compressionRatio: $0.compressionRatio)
+            let sampler = Task { [sampleInterval] in
+                var last = 0.0
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: sampleInterval) } catch { return }
+                    let fraction = await session.fractionCompleted()
+                    guard !Task.isCancelled else { return }
+                    if fraction.isFinite {
+                        // WhisperKit may reset its Progress between VAD windows. Only whole-file completion emits 1.
+                        last = max(last, min(1.0.nextDown, max(0, fraction)))
+                        progress(track, last)
+                    }
+                }
             }
+            do {
+                out[track] = try await session.transcribe(url, language: request.language)
+            } catch {
+                sampler.cancel(); await sampler.value
+                throw error
+            }
+            sampler.cancel(); await sampler.value
+            try Task.checkCancellation()
             progress(track, 1)
         }
         return out
     }
 
-    private func load() async throws -> WhisperKit {
+    private func load() async throws -> any WhisperSession {
         guard let marker = try? installedModel() else { throw TranscriberError.modelNotInstalled }
-        let kit = try await OfflineWhisperKit(WhisperKitConfig(modelFolder: marker.folder.path, tokenizerFolder: marker.tokenizerFolder,
-                                                            verbose: false, prewarm: false, load: false, download: false))
-        do { try await kit.loadModels(); return kit }
-        catch { await kit.unloadModels(); throw error }
+        return try await sessionLoader(marker.folder, marker.tokenizerFolder)
     }
 
     // MARK: ModelProvider
