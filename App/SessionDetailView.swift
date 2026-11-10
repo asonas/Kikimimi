@@ -5,29 +5,20 @@ import RecorderCore
 struct SessionDetailView: View {
     let env: AppEnvironment
     let session: SessionListing
+    let state: SessionDetailState
     @Environment(\.openSettings) private var openSettings
-    @State private var meta: SessionMeta?
-    @State private var metadataError: String?
-    @State private var transcript: TranscriptDisplay = .loading
-    @State private var markdownAvailable = false
     @State private var copyMessage: String?
-    @State private var segmentsAvailable = false
     @State private var exporting = false
     @State private var exportError: String?
-    @State private var exportOutdated = false
-
-    private enum TranscriptDisplay: Equatable {
-        case loading, absent, loaded([TranscriptLine]), failed(String)
-    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
-                if let metadataError { Text(metadataError).foregroundStyle(.red) }
+                if let metadataError = state.metadataError { Text(metadataError).foregroundStyle(.red) }
                 liveCapture
-                if let meta {
-                    HStack(alignment: .top, spacing: 24) {
+                if let meta = state.meta {
+                    VStack(alignment: .leading, spacing: 16) {
                         trackSummary(.me, meta: meta)
                         trackSummary(.remote, meta: meta)
                     }
@@ -36,35 +27,25 @@ struct SessionDetailView: View {
                 exportStatus
                 jobProgress
                 if let copyMessage { Text(copyMessage).font(.caption).foregroundStyle(.secondary) }
-                Divider()
-                SessionSummaryView(env: env, ref: session.ref, transcriptAvailable: markdownAvailable)
-                Divider()
-                Text("書き起こし").font(.title2.bold())
-                transcriptContent
             }
-            .padding(32)
-            .frame(maxWidth: 920, alignment: .leading)
+            .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .task(id: session.ref) {
-            while !Task.isCancelled {
-                await refresh()
-                do { try await Task.sleep(for: .seconds(1)) } catch { break }
-            }
         }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(session.company).font(.largeTitle.bold()).textSelection(.enabled)
+            Text(session.company).font(.title.bold()).textSelection(.enabled)
             if let title = session.title { Text(title).font(.title2).textSelection(.enabled) }
-            HStack(spacing: 16) {
-                Text(SessionDate.string(session.startedAt, timeZone: meta.flatMap { TimeZone(identifier: $0.timeZone) }))
-                if let seconds = session.durationSeconds {
-                    Text(Duration.seconds(seconds), format: .time(pattern: .hourMinuteSecond)).monospacedDigit()
+            VStack(alignment: .leading, spacing: 8) {
+                Text(SessionDate.string(session.startedAt, timeZone: state.meta.flatMap { TimeZone(identifier: $0.timeZone) }))
+                HStack(spacing: 12) {
+                    if let seconds = session.durationSeconds {
+                        Text(Duration.seconds(seconds), format: .time(pattern: .hourMinuteSecond)).monospacedDigit()
+                    }
+                    Text(job?.label ?? session.state.label)
+                        .padding(.horizontal, 8).padding(.vertical, 4).background(.quaternary, in: Capsule())
                 }
-                Text(job?.label ?? session.state.label)
-                    .padding(.horizontal, 8).padding(.vertical, 4).background(.quaternary, in: Capsule())
             }
             .font(.subheadline).foregroundStyle(.secondary)
         }
@@ -132,17 +113,17 @@ struct SessionDetailView: View {
             .disabled(job?.isBusy == true || env.termination.requested)
         }
         Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([session.ref.folder.url]) }
-        Button("Markdown をコピー") { copyMarkdown() }.disabled(!markdownAvailable)
+        Button("Markdown をコピー") { copyMarkdown() }.disabled(!state.markdownAvailable)
         if let path = env.settings.settings.exportFolder {
             Button("ノートを書き出す") { exportNote(to: path) }
-                .disabled(!segmentsAvailable || exporting || env.termination.requested)
+                .disabled(!state.segmentsAvailable || exporting || env.termination.requested)
         } else {
             Button("書き出し先を設定") { openSettings() }
         }
     }
 
     @ViewBuilder private var exportStatus: some View {
-        if let exported = meta?.export {
+        if let exported = state.meta?.export {
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(exported.path) に書き出しました（\(SessionDate.string(exported.at))）")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -150,7 +131,7 @@ struct SessionDetailView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: exported.path)])
                 }
                 .font(.caption)
-                if exportOutdated {
+                if state.exportOutdated {
                     Text("書き出し後に書き起こしか要約が更新されています").font(.caption).foregroundStyle(.orange)
                 }
             }
@@ -165,7 +146,7 @@ struct SessionDetailView: View {
             defer { exporting = false }
             do {
                 try await env.store.exportNote(session.ref, to: URL(fileURLWithPath: path, isDirectory: true))
-                await refresh()
+                await state.refresh(store: env.store)
             } catch { exportError = "書き出せませんでした: \(error.localizedDescription)" }
         }
     }
@@ -179,61 +160,7 @@ struct SessionDetailView: View {
         }
     }
 
-    @ViewBuilder private var transcriptContent: some View {
-        switch transcript {
-        case .loading: ProgressView("書き起こしを読み込んでいます")
-        case .absent:
-            Text("書き起こしはまだありません").foregroundStyle(.secondary)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 8) {
-                Text("書き起こしを読み込めませんでした").foregroundStyle(.red)
-                Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            }
-        case .loaded(let lines):
-            if lines.isEmpty {
-                Text("表示する発話はありません").foregroundStyle(.secondary)
-            } else {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        HStack(alignment: .top, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(line.timestamp).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                Text(line.speaker == .me ? "自分" : "相手")
-                                    .font(.caption.bold()).foregroundStyle(line.speaker == .me ? .blue : .purple)
-                            }
-                            .frame(width: 76, alignment: .leading)
-                            Text(line.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.vertical, 16)
-                        Divider()
-                    }
-                }
-            }
-        }
-    }
-
     private var job: TranscriptionJobState? { env.transcription.jobs.first { $0.id == session.id }?.state }
-
-    private func refresh() async {
-        do {
-            let value = try await env.store.meta(of: session.ref)
-            guard !Task.isCancelled else { return }
-            meta = value; metadataError = nil
-        } catch { if !Task.isCancelled { metadataError = "録音情報を読み込めませんでした: \(error.localizedDescription)" } }
-        do {
-            let lines = try await env.store.transcriptLines(of: session.ref)
-            guard !Task.isCancelled else { return }
-            transcript = lines.map(TranscriptDisplay.loaded) ?? .absent
-            segmentsAvailable = lines != nil
-        } catch { if !Task.isCancelled { transcript = .failed(error.localizedDescription); segmentsAvailable = false } }
-        markdownAvailable = FileManager.default.fileExists(atPath: session.ref.folder.transcript.path)
-        if let exported = meta?.export {
-            let dates = [session.ref.folder.transcript, session.ref.folder.summary].compactMap {
-                try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            }
-            exportOutdated = SessionExportFreshness.isOutdated(exportedAt: exported.at, modifiedAt: dates)
-        } else { exportOutdated = false }
-    }
 
     private func copyMarkdown() {
         do {

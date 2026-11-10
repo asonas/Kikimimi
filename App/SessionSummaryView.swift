@@ -6,6 +6,7 @@ struct SessionSummaryView: View {
     let env: AppEnvironment
     let ref: SessionRef
     let transcriptAvailable: Bool
+    var onCreated: () -> Void = {}
     @State private var summary: String?
     @State private var error: String?
     @State private var operation: Task<Void, Never>?
@@ -14,6 +15,9 @@ struct SessionSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("要約").font(.title2.bold())
+            if summary == nil, operation == nil {
+                Text("書き起こしから面接の要点をまとめられます").foregroundStyle(.secondary)
+            }
             if operation != nil {
                 HStack {
                     ProgressView("要約を作成しています")
@@ -65,6 +69,7 @@ struct SessionSummaryView: View {
                 try Task.checkCancellation()
                 try await env.store.saveSummary(ref, markdown: result)
                 summary = result
+                onCreated()
             } catch is CancellationError { }
             catch { if !Task.isCancelled { self.error = error.localizedDescription } }
             await env.chatGPT.refresh()
