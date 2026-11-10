@@ -62,6 +62,7 @@ struct SummaryAPIKey: BearerTokenSource {
 final class SummaryCredentials {
     let source = SummaryAPIKey()
     private(set) var hasKey = false
+    private(set) var revision = 0
     private(set) var error: String?
 
     func refresh() {
@@ -70,12 +71,12 @@ final class SummaryCredentials {
     }
 
     func save(_ key: String) {
-        do { try source.save(key); refresh() }
+        do { try source.save(key); revision += 1; refresh() }
         catch { self.error = error.localizedDescription }
     }
 
     func delete() {
-        do { try source.delete(); refresh() }
+        do { try source.delete(); revision += 1; refresh() }
         catch { self.error = error.localizedDescription }
     }
 }

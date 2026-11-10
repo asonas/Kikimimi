@@ -22,6 +22,7 @@ final class AppEnvironment {
     let calendar = CalendarModel(source: LiveCalendar())
     let summaryCredentials = SummaryCredentials()
     let chatGPT = ChatGPTSignIn()
+    let summaryModels = SummaryModelLists()
     var summaryProviderReady: Bool {
         switch settings.settings.summaryProvider {
         case .apiKey: summaryCredentials.hasKey

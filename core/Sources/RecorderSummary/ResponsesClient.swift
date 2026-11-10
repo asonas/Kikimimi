@@ -6,6 +6,7 @@ public protocol BearerTokenSource: Sendable {
 
 public enum SummaryError: Error, Sendable, Equatable, LocalizedError {
     case invalidKey
+    case signInAgain
     case rateLimited(code: String?)
     case http(status: Int, message: String)
     case responseFailed(String)
@@ -16,6 +17,7 @@ public enum SummaryError: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidKey: "APIキーが無効です。設定で確認してください"
+        case .signInAgain: "再度サインインしてください"
         case .rateLimited(let code): "リクエスト回数または利用量の上限に達しました" + (code.map { "（\($0)）" } ?? "")
         case .http(let status, let message): "要約APIエラー（\(status)）: \(message)"
         case .responseFailed(let message): "要約に失敗しました: \(message)"
@@ -38,6 +40,14 @@ public enum SummaryError: Error, Sendable, Equatable, LocalizedError {
                          "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable",
                          "subscription_sharing_invalid_user", "subscription_sharing_unsupported_capability"].contains(code) else { return nil }
         return .chatGPT(code: code, param: param)
+    }
+
+    static func httpFailure(status: Int, data: Data, unauthorized: SummaryError = .invalidKey) -> SummaryError {
+        let error = try? JSONDecoder().decode(ErrorBody.self, from: data).error
+        if let mapped = chatGPTError(code: error?.code, param: error?.param) { return mapped }
+        if status == 401 { return unauthorized }
+        if status == 429 { return .rateLimited(code: error?.code) }
+        return .http(status: status, message: error?.message ?? "応答を確認できませんでした")
     }
 }
 
@@ -103,11 +113,7 @@ public struct ResponsesClient: Sendable {
             guard (200..<300).contains(response.status) else {
                 var data = Data()
                 for try await chunk in response.body { try Task.checkCancellation(); data.append(chunk) }
-                let error = try? JSONDecoder().decode(ErrorBody.self, from: data).error
-                if let mapped = SummaryError.chatGPTError(code: error?.code, param: error?.param) { throw mapped }
-                if response.status == 401 { throw SummaryError.invalidKey }
-                if response.status == 429 { throw SummaryError.rateLimited(code: error?.code) }
-                throw SummaryError.http(status: response.status, message: error?.message ?? "応答を確認できませんでした")
+                throw SummaryError.httpFailure(status: response.status, data: data)
             }
             var parser = SummarySSEParser()
             for try await chunk in response.body {

@@ -53,8 +53,7 @@ struct SummarySettingsView: View {
                 }
                 if let error = env.summaryCredentials.error { Text(error).font(.caption).foregroundStyle(.red) }
             }
-            TextField("モデル", text: Binding(get: { env.settings.settings.summaryModel },
-                                             set: { env.settings.settings.summaryModel = $0 }))
+            SummaryModelPicker(env: env)
             Text("書き起こしは、要約ボタンを押したときだけOpenAIへ送信されます")
                 .font(.caption).foregroundStyle(.secondary)
             if env.settings.settings.summaryProvider == .apiKey {

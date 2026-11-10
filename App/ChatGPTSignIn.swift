@@ -43,6 +43,7 @@ final class ChatGPTSignIn {
     private(set) var email: String?
     private(set) var error: String?
     private(set) var signingOut = false
+    private(set) var revision = 0
     private var operation: Task<Void, Never>?
     var waiting: Bool { operation != nil }
 
@@ -78,6 +79,7 @@ final class ChatGPTSignIn {
                         let record = try await ChatGPTOAuthClient().signIn(code: code, clientID: clientID, attempt: attempt)
                         try Task.checkCancellation()
                         try await source.accept(record)
+                        revision += 1
                     }
                 } onCancel: { listener.cancel() }
                 await refresh()
@@ -93,7 +95,9 @@ final class ChatGPTSignIn {
         signingOut = true; error = nil
         defer { signingOut = false }
         do {
-            if !(try await source.signOut()) {
+            let confirmed = try await source.signOut()
+            revision += 1
+            if !confirmed {
                 error = "サインアウトしましたが、サーバー側の解除は確認できませんでした。ChatGPTの設定で確認してください"
             }
         } catch { self.error = error.localizedDescription }
