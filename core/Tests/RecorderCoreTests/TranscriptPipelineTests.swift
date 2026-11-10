@@ -182,6 +182,16 @@ private func golden(_ name: String) throws -> String {
     #expect(TranscriptRenderer.render(meta: transcriptMeta(), segments: transcriptFile(merged)) == expected)
 }
 
+@Test func transcriptRendererIncludesScheduledEventHeaderInNewGolden() throws {
+    var meta = transcriptMeta()
+    let start = try #require(ISO8601DateFormatter().date(from: "2026-11-10T04:00:00Z"))
+    meta.event = SessionEvent(title: "会社A\n二次面接", start: start, end: start.addingTimeInterval(3600),
+                              meetingURL: URL(string: "https://meet.google.com/abc"), calendarTitle: "仕事")
+    let segments = transcriptFile([segment("こんにちは。", start: 0, end: 1)])
+    let expected = try golden("transcript-event")
+    #expect(TranscriptRenderer.render(meta: meta, segments: segments) == expected)
+}
+
 @Test func transcriptRendererMatchesEscapedAndLongDurationGolden() throws {
     let meta = transcriptMeta(company: "A: B \"x\"", title: nil, zone: "UTC", duration: 90001)
     let file = transcriptFile([segment("90分近く経ちました。", start: 5321.9, end: 5322),

@@ -13,6 +13,7 @@ public struct SessionMeta: Sendable, Equatable, Codable {
     public var id: UUID
     public var company: String
     public var title: String?
+    public var event: SessionEvent?
     /// IANA identifier at capture time, so local date and folder name are re-derivable.
     public var timeZone: String
     public var startedAt: Date
@@ -23,11 +24,12 @@ public struct SessionMeta: Sendable, Equatable, Codable {
     public var tracks: PerTrack<TrackMeta>
 
     public init(id: UUID, company: String, title: String?, timeZone: String, startedAt: Date,
-                app: AppInfo, tracks: PerTrack<TrackMeta>) {
+                app: AppInfo, tracks: PerTrack<TrackMeta>, event: SessionEvent? = nil) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id; self.company = company; self.title = title; self.timeZone = timeZone
         self.startedAt = startedAt; self.capture = .inProgress; self.app = app
         self.clock = "mach-host-seconds"; self.tracks = tracks
+        self.event = event
     }
 }
 
@@ -130,7 +132,7 @@ extension TrackSource: Codable {
 
 extension SessionMeta {
     private enum Keys: String, CodingKey {
-        case schemaVersion, id, company, title, timeZone, startedAt, endedAt, endReason, app, clock, tracks
+        case schemaVersion, id, company, title, event, timeZone, startedAt, endedAt, endReason, app, clock, tracks
     }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -141,6 +143,7 @@ extension SessionMeta {
         id = try c.decode(UUID.self, forKey: .id)
         company = try c.decode(String.self, forKey: .company)
         title = try c.decodeIfPresent(String.self, forKey: .title)
+        event = try c.decodeIfPresent(SessionEvent.self, forKey: .event)
         timeZone = try c.decode(String.self, forKey: .timeZone)
         startedAt = try c.decode(Date.self, forKey: .startedAt)
         let endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
@@ -158,6 +161,7 @@ extension SessionMeta {
         var c = encoder.container(keyedBy: Keys.self)
         try c.encode(schemaVersion, forKey: .schemaVersion); try c.encode(id, forKey: .id)
         try c.encode(company, forKey: .company); try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(event, forKey: .event)
         try c.encode(timeZone, forKey: .timeZone); try c.encode(startedAt, forKey: .startedAt)
         if case let .finished(endedAt, reason) = capture {
             try c.encode(endedAt, forKey: .endedAt); try c.encode(reason, forKey: .endReason)

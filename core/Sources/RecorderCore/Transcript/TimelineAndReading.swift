@@ -121,6 +121,10 @@ enum TranscriptRenderer {
         var lines = ["---", "type: interview-log", "company: \(quoted(meta.company))", "date: \(quoted(date))",
                      "duration: \(quoted(TranscriptTimestamp.format(SessionTimeline.duration(of: meta))))", "---", "",
                      "# \(heading(meta.company)) \(heading(meta.title ?? "面接"))（\(date)）", ""]
+        if let event = meta.event {
+            formatter.dateFormat = "yyyy-MM-dd HH:mm"
+            lines += ["予定: \(heading(event.title))（\(formatter.string(from: event.start))〜\(formatter.string(from: event.end))）", ""]
+        }
         lines += TranscriptReader.lines(from: segments.segments, policy: policy).map {
             "[\($0.timestamp) \($0.speaker == .me ? "自分" : "相手")] \($0.text)"
         }

@@ -196,7 +196,7 @@ public actor SessionStore {
                 guard let lease = CaptureLease.acquire(folder.lock) else { throw CocoaError(.fileWriteUnknown) }
                 let meta = SessionMeta(id: UUID(), company: draft.company, title: draft.title,
                                        timeZone: zone.identifier, startedAt: startedAt, app: app,
-                                       tracks: .init(me: .init(source: mic), remote: .init(source: remote)))
+                                       tracks: .init(me: .init(source: mic), remote: .init(source: remote)), event: draft.event)
                 try writeMeta(meta, to: folder)
                 return (SessionRef(id: meta.id, folder: folder), lease)
             } catch {

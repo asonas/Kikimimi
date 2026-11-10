@@ -26,6 +26,23 @@ private func meta() -> SessionMeta {
                 app: app, tracks: .init(me: .init(source: mic), remote: .init(source: .allSystemAudio)))
 }
 
+@Test func sessionStorePersistsEventSnapshotAndNamesFolderFromEventTitle() async throws {
+    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let store = store(root)
+    let event = CalendarEvent(id: "event/occurrence", title: "会社A / 二次面接", start: start,
+                              end: start.addingTimeInterval(3600), calendarID: "work", calendarTitle: "仕事",
+                              meetingURL: URL(string: "https://zoom.us/j/123"))
+    let snapshot = SessionEvent(event)
+    let draft = SessionDraft(company: event.title, remote: .allSystemAudio, event: snapshot)
+    let (ref, lease) = try await store.create(draft, mic: mic, remote: .allSystemAudio, app: app)
+    defer { lease.release() }
+    let saved = try await store.meta(of: ref)
+    #expect(saved.company == event.title)
+    #expect(saved.title == nil)
+    #expect(saved.event == snapshot)
+    #expect(ref.folder.url.lastPathComponent == "2026-11-09_2330_会社A_-_二次面接")
+}
+
 private func write<T: Encodable>(_ value: T, to url: URL) throws {
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
     try encoder.encode(value).write(to: url, options: .atomic)

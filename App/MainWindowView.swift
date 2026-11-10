@@ -8,7 +8,7 @@ struct MainWindowView: View {
     @State private var sessions: [SessionListing] = []
     @State private var selection: UUID?
     @State private var listError: String?
-    @State private var presentingRecording = false
+    @State private var recordingRequest: RecordingRequest?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +36,11 @@ struct MainWindowView: View {
                                             Image(systemName: "video").font(.caption)
                                                 .accessibilityLabel("オンライン会議リンクあり")
                                         }
+                                        Spacer(minLength: 4)
+                                        Button("録音") { recordingRequest = RecordingRequest(event: event) }
+                                            .controlSize(.small)
+                                            .disabled(recordingUnavailable)
+                                            .accessibilityLabel("\(event.title)の録音を準備")
                                     }
                                 }
                                 .padding(.vertical, 4)
@@ -87,10 +92,10 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 820, minHeight: 560)
         .toolbar {
-            Button { presentingRecording = true } label: { Label("新しい録音", systemImage: "plus") }
-                .disabled(env.recorder.phase.isCapturing || env.termination.requested)
+            Button { recordingRequest = RecordingRequest(event: nil) } label: { Label("新しい録音", systemImage: "plus") }
+                .disabled(recordingUnavailable)
         }
-        .sheet(isPresented: $presentingRecording) { NewRecordingView(env: env) }
+        .sheet(item: $recordingRequest) { NewRecordingView(env: env, event: $0.event) }
         .task { refreshCalendar() }
         .onChange(of: env.settings.settings.calendarIDs) { _, _ in refreshCalendar() }
         .onReceive(NotificationCenter.default.publisher(for: LiveCalendar.changedNotification).receive(on: RunLoop.main)) { _ in refreshCalendar() }
@@ -108,6 +113,10 @@ struct MainWindowView: View {
     }
 
     private func refreshCalendar() { env.calendar.refresh(calendars: env.settings.settings.calendarIDs) }
+
+    private var recordingUnavailable: Bool {
+        !env.readiness.readiness.canRecord || env.recorder.phase.isCapturing || env.termination.requested
+    }
 
     private var activeSessionID: UUID? {
         switch env.recorder.phase {
@@ -132,4 +141,9 @@ struct MainWindowView: View {
             if selection == nil { selection = activeSessionID ?? orderedSessions.first?.id }
         } catch { listError = "録音一覧を取得できませんでした: \(error.localizedDescription)" }
     }
+}
+
+private struct RecordingRequest: Identifiable {
+    let id = UUID()
+    let event: CalendarEvent?
 }

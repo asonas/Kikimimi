@@ -5,8 +5,29 @@ public struct SessionDraft: Sendable, Equatable {
     public var company: String          // required, non-empty after trimming
     public var title: String?           // optional round label, e.g. "二次面接"
     public var remote: RemoteSource
-    public init(company: String, title: String? = nil, remote: RemoteSource) {
+    public var event: SessionEvent?
+    public init(company: String, title: String? = nil, remote: RemoteSource, event: SessionEvent? = nil) {
         self.company = company; self.title = title; self.remote = remote
+        self.event = event
+    }
+}
+
+/// Snapshot of the scheduled event at recording start; independent of later calendar edits.
+public struct SessionEvent: Sendable, Equatable, Codable {
+    public let title: String
+    public let start: Date
+    public let end: Date
+    public let meetingURL: URL?
+    public let calendarTitle: String
+
+    public init(title: String, start: Date, end: Date, meetingURL: URL?, calendarTitle: String) {
+        self.title = title; self.start = start; self.end = end
+        self.meetingURL = meetingURL; self.calendarTitle = calendarTitle
+    }
+
+    public init(_ event: CalendarEvent) {
+        self.init(title: event.title, start: event.start, end: event.end,
+                  meetingURL: event.meetingURL, calendarTitle: event.calendarTitle)
     }
 }
 

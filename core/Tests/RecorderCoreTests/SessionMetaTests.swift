@@ -27,11 +27,29 @@ private func object(_ data: Data) throws -> [String: Any] {
     for name in ["session-in-progress", "session-finished"] {
         let data = try fixture(name)
         let meta = try decoder().decode(SessionMeta.self, from: data)
+        #expect(meta.event == nil)
         let encoded = try encoder().encode(meta)
         // Compare JSON values to pin the wire shape, independently of whitespace and key order.
         #expect(NSDictionary(dictionary: try object(encoded)) == NSDictionary(dictionary: try object(data)))
         #expect(try decoder().decode(SessionMeta.self, from: encoded) == meta)
     }
+}
+
+@Test func sessionEventSnapshotRoundTripsWithoutChangingSchema() throws {
+    var meta = try decoder().decode(SessionMeta.self, from: fixture("session-in-progress"))
+    for meetingURL in [nil, URL(string: "https://meet.google.com/abc")] {
+        meta.event = SessionEvent(title: "会社A 面接", start: meta.startedAt, end: meta.startedAt.addingTimeInterval(3600),
+                                  meetingURL: meetingURL, calendarTitle: "仕事")
+        let data = try encoder().encode(meta)
+        #expect(meta.schemaVersion == 1)
+        #expect(try decoder().decode(SessionMeta.self, from: data) == meta)
+        let event = try #require(try object(data)["event"] as? [String: Any])
+        #expect(event["title"] as? String == "会社A 面接")
+        #expect(event["calendarTitle"] as? String == "仕事")
+        if meetingURL == nil { #expect(event["meetingURL"] == nil) }
+    }
+    meta.event = nil
+    #expect(try object(encoder().encode(meta))["event"] == nil)
 }
 
 @Test func sessionRejectsEitherHalfFinishedCapture() throws {
