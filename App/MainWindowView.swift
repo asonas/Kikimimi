@@ -28,7 +28,7 @@ struct MainWindowView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(session.company).font(.headline).lineLimit(1)
                             if let title = session.title { Text(title).lineLimit(1) }
-                            Text(session.startedAt, format: .dateTime.year().month().day().hour().minute())
+                            Text(SessionDate.string(session.startedAt))
                                 .font(.caption).foregroundStyle(.secondary)
                             HStack {
                                 Text(job(for: session)?.label ?? session.state.label)
@@ -54,20 +54,7 @@ struct MainWindowView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
             } detail: {
                 if let session = sessions.first(where: { $0.id == selection }) {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(session.company).font(.largeTitle.bold())
-                        if let title = session.title { Text(title).font(.title2) }
-                        Text(session.state.label).foregroundStyle(.secondary)
-                        if case .recording(let recording) = env.recorder.phase, recording.ref.id == session.id {
-                            HStack { Text("録音中"); Text(recording.startedAt, style: .timer).monospacedDigit() }
-                            TrackMeter(label: "自分", peak: env.recorder.levels?.me, health: recording.health.me)
-                            TrackMeter(label: "相手", peak: env.recorder.levels?.remote, health: recording.health.remote)
-                            Button("録音を停止") { Task { await env.recorder.stop() } }
-                        }
-                        Spacer()
-                    }
-                    .padding(32)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    SessionDetailView(env: env, session: session).id(session.id)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)

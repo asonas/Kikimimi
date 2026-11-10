@@ -1,6 +1,17 @@
 import SwiftUI
 import RecorderCore
 
+enum SessionDate {
+    static func string(_ date: Date, timeZone: TimeZone? = nil) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone ?? .current
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
 struct TrackMeter: View {
     let label: String
     let peak: Float?

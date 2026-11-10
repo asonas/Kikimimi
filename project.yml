@@ -4,6 +4,7 @@
 # `info:` + `entitlements:` generated from here.
 name: InterviewRecorder
 options:
+  developmentLanguage: ja
   bundleIdPrefix: as.ason
   deploymentTarget:
     macOS: "14.0"
@@ -15,6 +16,7 @@ configs:
   Release: release
 settings:
   base:
+    DEVELOPMENT_LANGUAGE: ja
     DEVELOPMENT_TEAM: QYP65434UW
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: Apple Development
@@ -49,6 +51,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: InterviewRecorder
+        CFBundleDevelopmentRegion: ja
+        CFBundleLocalizations: [ja]
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"

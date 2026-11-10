@@ -78,10 +78,12 @@ struct ReadingPolicy: Sendable, Equatable {
     }
 }
 
-struct TranscriptLine: Sendable, Equatable {
-    var start: Double
-    var speaker: Track
-    var text: String
+public struct TranscriptLine: Sendable, Equatable {
+    public internal(set) var start: Double
+    public internal(set) var speaker: Track
+    public internal(set) var text: String
+    /// Same timeline timestamp used in Markdown, including recordings longer than 24 hours.
+    public var timestamp: String { TranscriptTimestamp.format(start) }
 }
 
 enum TranscriptReader {
@@ -118,18 +120,12 @@ enum TranscriptRenderer {
         let date = formatter.string(from: meta.startedAt)
         func heading(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
         var lines = ["---", "type: interview-log", "company: \(quoted(meta.company))", "date: \(quoted(date))",
-                     "duration: \(quoted(timestamp(SessionTimeline.duration(of: meta))))", "---", "",
+                     "duration: \(quoted(TranscriptTimestamp.format(SessionTimeline.duration(of: meta))))", "---", "",
                      "# \(heading(meta.company)) \(heading(meta.title ?? "面接"))（\(date)）", ""]
         lines += TranscriptReader.lines(from: segments.segments, policy: policy).map {
-            "[\(timestamp($0.start)) \($0.speaker == .me ? "自分" : "相手")] \($0.text)"
+            "[\($0.timestamp) \($0.speaker == .me ? "自分" : "相手")] \($0.text)"
         }
         return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func timestamp(_ seconds: Double) -> String {
-        let whole = seconds.isFinite ? max(0, seconds.rounded(.down)) : 0
-        return String(format: "%02.0f:%02.0f:%02.0f", (whole / 3600).rounded(.down),
-                      (whole.truncatingRemainder(dividingBy: 3600) / 60).rounded(.down), whole.truncatingRemainder(dividingBy: 60))
     }
 
     private static func quoted(_ value: String) -> String {
@@ -146,5 +142,13 @@ enum TranscriptRenderer {
             }
         }
         return result + "\""
+    }
+}
+
+private enum TranscriptTimestamp {
+    static func format(_ seconds: Double) -> String {
+        let whole = seconds.isFinite ? max(0, seconds.rounded(.down)) : 0
+        return String(format: "%02.0f:%02.0f:%02.0f", (whole / 3600).rounded(.down),
+            (whole.truncatingRemainder(dividingBy: 3600) / 60).rounded(.down), whole.truncatingRemainder(dividingBy: 60))
     }
 }

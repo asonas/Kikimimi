@@ -265,6 +265,12 @@ public actor SessionStore {
         return file
     }
 
+    /// Read-only presentation of segments using the same filtering/coalescing policy as Markdown.
+    /// nil means no segments file; malformed or unsupported files throw. Never parses or rewrites Markdown.
+    public func transcriptLines(of ref: SessionRef) throws -> [TranscriptLine]? {
+        try segments(of: ref).map { TranscriptReader.lines(from: $0.segments) }
+    }
+
     /// Writes segments.json, then renders and writes transcript.md (existing transcript.md moves to transcript.prev.md first).
     /// The order matters: transcript.md is derived, so a crash between the two leaves a stale-but-valid state
     /// that `rerender` (same function, same inputs) repairs.
