@@ -5,7 +5,7 @@ import RecorderCore
 struct NewRecordingView: View {
     let env: AppEnvironment
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var company = ""
     @State private var title = ""
     @State private var candidates: [RemoteSource] = []
@@ -24,7 +24,7 @@ struct NewRecordingView: View {
             }
             if !env.readiness.readiness.canRecord {
                 Text("設定で録音の準備を完了してください").foregroundStyle(.secondary)
-                Button("設定を開く") { openWindow(id: "setup") }
+                Button("設定を開く") { openSettings() }
             }
             if let error { Text(error).foregroundStyle(.red) }
             HStack {

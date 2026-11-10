@@ -1,0 +1,83 @@
+import SwiftUI
+import RecorderCore
+
+struct TrackMeter: View {
+    let label: String
+    let peak: Float?
+    let health: TrackHealth
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(label)
+                Spacer()
+                Text(health.label).foregroundStyle(health.isProblem ? .orange : .secondary)
+            }
+            .font(.caption)
+            HStack {
+                ProgressView(value: Double(min(1, max(0, ((peak ?? -120) + 75) / 75))))
+                    .tint(health.isProblem ? .orange : .green)
+                    .accessibilityLabel("\(label)の録音レベル")
+                Text(String(format: "%.0f dBFS", peak ?? -120)).font(.caption.monospacedDigit()).frame(width: 72)
+            }
+        }
+    }
+}
+
+extension AppStatus {
+    var description: String {
+        switch self {
+        case .recording(_, let problem): problem ? "録音中・入力を確認してください" : "録音中"
+        case .preparing: "録音を準備しています"
+        case .saving: "録音を保存しています"
+        case .transcribing: "文字起こし中"
+        case .needsAttention(let message): message
+        case .idle: "録音できます"
+        }
+    }
+}
+
+extension TrackHealth {
+    var isProblem: Bool {
+        switch self { case .silent, .digitallySilent, .failed: true; default: false }
+    }
+    var label: String {
+        switch self {
+        case .waitingForAudio: "音声待ち"
+        case .live: "正常"
+        case .silent: "無音"
+        case .digitallySilent: "入力を確認してください"
+        case .failed: "入力が停止しました"
+        }
+    }
+}
+
+extension SessionState {
+    var needsAttention: Bool {
+        switch self { case .needsFinalize, .unusable: true; default: false }
+    }
+    var label: String {
+        switch self {
+        case .capturing: "録音中"
+        case .needsFinalize: "要保存処理"
+        case .readyToTranscribe: "文字起こし待ち"
+        case .transcribed: "文字起こし済み"
+        case .unusable: "録音を確認してください"
+        }
+    }
+}
+
+extension TranscriptionJobState {
+    var isBusy: Bool {
+        switch self { case .queued, .waiting, .running: true; case .failed, .done: false }
+    }
+    var label: String {
+        switch self {
+        case .queued: "文字起こし待ち"
+        case .waiting(.recordingInProgress): "録音終了後に文字起こし"
+        case .waiting(.modelNotReady): "モデルの導入待ち"
+        case .running(let fraction): "文字起こし中 \(Int(fraction * 100))%"
+        case .failed(let message): "文字起こし失敗: \(message)"
+        case .done: "文字起こし済み"
+        }
+    }
+}

@@ -52,7 +52,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
-        LSUIElement: true
+        LSUIElement: false
         # No LSMultipleInstancesProhibited: Relaunch and the DEBUG headless mode both start a second instance with `open -n`
         # on purpose. The AppDelegate's single-instance nicety skips those launch modes; recovery safety comes from the
         # per-session flock lease, not from instance counting.
