@@ -109,7 +109,8 @@ private final class RemoteOutput: NSObject, SCStreamOutput, SCStreamDelegate, Se
 
 /// AVAudioEngine input with kAudioOutputUnitProperty_CurrentDevice set from the device UID; format from inputFormat(forBus: 0);
 /// extracts one channel without downmix (Phase 0 `extractChannel`). Observes AVAudioEngineConfigurationChange:
-/// a change in device/sample rate finishes the stream with an error => track failure (.deviceLost / .formatChanged), no auto-restart in Phase 1.
+/// real changes or a stopped engine finish the stream with a track failure; unchanged, running input is preserved.
+/// No auto-restart in Phase 1.
 actor MicSource: AudioSource {
     private let device: InputDeviceInfo
     private let channel: Int?
@@ -154,11 +155,9 @@ actor MicSource: AudioSource {
         do { try engine.start() }
         catch { input.removeTap(onBus: 0); throw error }
         self.engine = engine; continuation = pair.continuation
-        let uid = device.uid
-        observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { _ in
-            let present = (try? hardwareInputs().contains { $0.info.uid == uid }) == true
-            pair.continuation.finish(throwing: AudioSourceFailure(code: present ? .formatChanged : .deviceLost,
-                                                                  message: "Microphone configuration changed"))
+        let expected = MicrophoneConfiguration(deviceID: id, format: format.streamDescription.pointee)
+        observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            Task { await self?.configurationChanged(expected: expected) }
         }
         pair.continuation.onTermination = { [weak self] _ in Task { await self?.stop() } }
         return pair.stream
@@ -169,11 +168,42 @@ actor MicSource: AudioSource {
         if let engine { engine.stop(); engine.inputNode.removeTap(onBus: 0); self.engine = nil }
         continuation?.finish(); continuation = nil
     }
+    private func configurationChanged(expected: MicrophoneConfiguration) {
+        guard !stopped, let engine else { return }
+        var actual = AudioDeviceID(0), bytes = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = engine.inputNode.audioUnit.map {
+            AudioUnitGetProperty($0, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &actual, &bytes)
+        }
+        let current = status == noErr ? MicrophoneConfiguration(deviceID: actual,
+            format: engine.inputNode.inputFormat(forBus: 0).streamDescription.pointee) : nil
+        let unchanged = expected.preservesInput(isRunning: engine.isRunning, current: current)
+        guard !unchanged else { return }
+        let present = (try? hardwareInputs().contains { $0.info.uid == device.uid }) == true
+        continuation?.finish(throwing: AudioSourceFailure(code: present ? .formatChanged : .deviceLost,
+            message: "Microphone configuration changed"))
+    }
 }
 
-struct AudioSourceFailure: Error, Sendable {
+struct MicrophoneConfiguration: Sendable {
+    let deviceID: AudioDeviceID
+    let format: AudioStreamBasicDescription
+
+    func hasSameFormat(as other: Self) -> Bool {
+        format.mSampleRate == other.format.mSampleRate && format.mFormatID == other.format.mFormatID
+            && format.mFormatFlags == other.format.mFormatFlags && format.mBytesPerPacket == other.format.mBytesPerPacket
+            && format.mFramesPerPacket == other.format.mFramesPerPacket && format.mBytesPerFrame == other.format.mBytesPerFrame
+            && format.mChannelsPerFrame == other.format.mChannelsPerFrame && format.mBitsPerChannel == other.format.mBitsPerChannel
+    }
+    func preservesInput(isRunning: Bool, current: Self?) -> Bool {
+        guard isRunning, let current else { return false }
+        return deviceID == current.deviceID && hasSameFormat(as: current)
+    }
+}
+
+struct AudioSourceFailure: LocalizedError, Sendable {
     let code: TrackFailure.Code
     let message: String
+    var errorDescription: String? { "\(code.rawValue): \(message)" }
 }
 
 func monoSamples(_ buffer: AVAudioPCMBuffer, channel: Int?) throws -> [Float] {
@@ -497,6 +527,16 @@ private func hardwareInputs() throws -> [HardwareInput] {
     guard status == noErr else { throw AudioSourceFailure(code: .deviceLost, message: "Cannot enumerate input devices") }
     var devices: [HardwareInput] = []
     for id in ids {
+        var compositionAddress = AudioObjectPropertyAddress(mSelector: kAudioAggregateDevicePropertyComposition,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        if AudioObjectHasProperty(id, &compositionAddress) {
+            var composition: CFDictionary?
+            var compositionSize = UInt32(MemoryLayout<CFDictionary?>.size)
+            let result = withUnsafeMutablePointer(to: &composition) {
+                AudioObjectGetPropertyData(id, &compositionAddress, 0, nil, &compositionSize, $0)
+            }
+            if result == noErr, isPrivateAggregate(composition: composition as? [String: Any]) { continue }
+        }
         var config = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
         var bytes: UInt32 = 0
@@ -513,6 +553,11 @@ private func hardwareInputs() throws -> [HardwareInput] {
                                                inputChannels: channels, isSystemDefault: id == defaultID)))
     }
     return devices.sorted { ($0.info.name, $0.info.uid) < ($1.info.name, $1.info.uid) }
+}
+
+func isPrivateAggregate(composition: [String: Any]?) -> Bool {
+    // CoreAudio documents this CFNumber: absent/0 means public, 1 means process-private and nonpersistent.
+    (composition?[kAudioAggregateDeviceIsPrivateKey] as? NSNumber)?.boolValue == true
 }
 
 private actor MicrophonePreview {

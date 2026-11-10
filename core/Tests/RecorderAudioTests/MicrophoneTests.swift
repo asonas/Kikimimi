@@ -39,6 +39,38 @@ import Testing
     }
 }
 
+@Test func privateAggregatesAreExcludedUsingCompositionNotTheirName() {
+    #expect(isPrivateAggregate(composition: ["private": NSNumber(value: 1), "uid": "arbitrary-name"]))
+    #expect(!isPrivateAggregate(composition: ["private": NSNumber(value: 0), "uid": "CADefaultDeviceAggregate-123-0"]))
+    #expect(!isPrivateAggregate(composition: ["uid": "CADefaultDeviceAggregate-123-0"]))
+    #expect(!isPrivateAggregate(composition: nil))
+}
+
+@Test func microphoneIgnoresConfigurationNotificationOnlyForUnchangedRunningInput() throws {
+    let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))
+    let expected = MicrophoneConfiguration(deviceID: 110, format: format.streamDescription.pointee)
+    #expect(expected.preservesInput(isRunning: true, current: expected))
+    #expect(!expected.preservesInput(isRunning: false, current: expected))
+    #expect(!expected.preservesInput(isRunning: true, current: nil))
+    let otherDevice = MicrophoneConfiguration(deviceID: 111, format: expected.format)
+    #expect(!expected.preservesInput(isRunning: true, current: otherDevice))
+    for field in ["rate", "channels", "format", "flags", "bytesPacket", "framesPacket", "bytesFrame", "bits"] {
+        var changed = expected.format
+        switch field {
+        case "rate": changed.mSampleRate = 96_000
+        case "channels": changed.mChannelsPerFrame = 2
+        case "format": changed.mFormatID += 1
+        case "flags": changed.mFormatFlags ^= 1
+        case "bytesPacket": changed.mBytesPerPacket += 1
+        case "framesPacket": changed.mFramesPerPacket += 1
+        case "bytesFrame": changed.mBytesPerFrame += 1
+        default: changed.mBitsPerChannel = 16
+        }
+        let otherFormat = MicrophoneConfiguration(deviceID: 110, format: changed)
+        #expect(!expected.preservesInput(isRunning: true, current: otherFormat))
+    }
+}
+
 private struct FailedDeviceSource: AudioSource {
     func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> {
         throw AudioSourceFailure(code: .deviceLost, message: "Selected microphone was disconnected")

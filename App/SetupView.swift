@@ -8,6 +8,7 @@ struct SetupView: View {
     @State private var devices: [InputDeviceInfo] = []
     @State private var inputError: String?
     @State private var peak: Float = -120
+    @State private var lastLoggedRows: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -69,7 +70,9 @@ struct SetupView: View {
     }
 
     private var previewKey: String {
-        "\(env.settings.settings.mic?.deviceUID ?? "")/\(env.settings.settings.mic?.channel ?? 0)/\(scenePhase)/\(env.recorder.phase.isCapturing)/\(env.readiness.readiness.mic)/\(devices)"
+        let uid = env.settings.settings.mic?.deviceUID ?? ""
+        let channels = devices.first(where: { $0.uid == uid })?.inputChannels ?? 0
+        return "\(uid)/\(env.settings.settings.mic?.channel ?? 0)/\(scenePhase)/\(env.recorder.phase.isCapturing)/\(env.readiness.readiness.mic)/\(channels)"
     }
 
     private var modelRow: some View {
@@ -196,7 +199,11 @@ struct SetupView: View {
         #if DEBUG
         let screen = env.readiness.readiness.screen
         let mic = env.readiness.readiness.mic
-        FileHandle.standardError.write(Data("SETUP screen=\(screen) microphone=\(mic) input=\(env.readiness.readiness.micDevice) model=\(env.transcription.model) variant=\(env.modelVariant) override=\(env.modelVariantOverridden)\n".utf8))
+        let line = "SETUP screen=\(screen) microphone=\(mic) input=\(env.readiness.readiness.micDevice) model=\(env.transcription.model) variant=\(env.modelVariant) override=\(env.modelVariantOverridden)"
+        if line != lastLoggedRows {
+            lastLoggedRows = line
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
         #endif
     }
 }
