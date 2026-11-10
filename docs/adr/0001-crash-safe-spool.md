@@ -8,13 +8,11 @@ Accepted — 2026-11-09
 
 Phase 0 は AAC m4a に直接追記する。SIGINT/SIGTERM による正常な close の成功だけでは、強制終了後の音声を守れない。
 
-2026-11-09、実際の署名付きアプリを LaunchServices 経由で起動して確認した。
+2026-11-09、実際の署名付き Phase 0 アプリを LaunchServices 経由で起動して確認した。対象は Chrome、入力は Rubix44 の INPUT 1、60秒指定、保存先は `recordings/kill9-01`。13:43:47 に起動し、約12秒後の13:43:59に PID 12463 へ SIGKILL を送った。録音ログは `build/logs/20261109-134347-12454.stderr.log`。
+
+Phase 0 のソースと起動スクリプトは2026-11-10に撤去した。当時の実装は Git 履歴に残し、現行アプリの強制終了・復元手順は [QA](../qa.md) に移した。以下は生成済み音声を調べたコマンドである。
 
 ```sh
-./scripts/build-app.sh
-./scripts/run.sh --app com.google.Chrome --input-device Rubix44 --input-channel 1 --duration 60 --out "$PWD/recordings/kill9-01"
-# build/logs/20261109-134347-12454.stderr.log の PID。起動13:43:47、SIGKILL 13:43:59 JST。
-hc exec 'kill -9 12463'
 afinfo recordings/kill9-01/audio-remote.m4a
 afinfo recordings/kill9-01/audio-self.m4a
 ffprobe -hide_banner -show_format -show_streams recordings/kill9-01/audio-remote.m4a
