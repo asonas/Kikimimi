@@ -80,13 +80,29 @@ private let completed = "data: {\"type\":\"response.completed\",\"response\":{\"
     await #expect(throws: SummaryError.invalidKey) {
         try await client("{}", status: 401).summarize(transcript: "input", model: "test", tokenSource: TestToken())
     }
-    await #expect(throws: SummaryError.rateLimited(code: "subscription_sharing_usage_limit_exceeded")) {
+    await #expect(throws: SummaryError.chatGPT(code: "subscription_sharing_usage_limit_exceeded", param: nil)) {
         try await client(#"{"error":{"message":"limit","code":"subscription_sharing_usage_limit_exceeded"}}"#, status: 429)
             .summarize(transcript: "input", model: "test", tokenSource: TestToken())
     }
     await #expect(throws: SummaryError.http(status: 503, message: "unavailable")) {
         try await client(#"{"error":{"message":"unavailable","code":"server_error"}}"#, status: 503)
             .summarize(transcript: "input", model: "test", tokenSource: TestToken())
+    }
+}
+
+@Test func summaryMapsChatGPTSubscriptionCodesForHTTPAndFailedStream() async throws {
+    for (code, status) in [("subscription_sharing_usage_limit_exceeded", 429), ("subscription_sharing_user_not_eligible", 403),
+                           ("subscription_sharing_usage_unavailable", 503), ("subscription_sharing_user_unavailable", 503),
+                           ("subscription_sharing_invalid_user", 401), ("subscription_sharing_unsupported_capability", 400)] {
+        let error = ["code": code, "message": "failure", "param": "tools"]
+        let data = try JSONSerialization.data(withJSONObject: ["error": error])
+        let http = ResponsesClient { _ in SummaryHTTPResponse(status: status, body: body([data])) }
+        let expected = SummaryError.chatGPT(code: code, param: "tools")
+        await #expect(throws: expected) { try await http.summarize(transcript: "input", model: "test", tokenSource: TestToken()) }
+        let event = try JSONSerialization.data(withJSONObject: ["type": "response.failed", "response": ["error": error]])
+        let stream = client(delta + "data: " + String(decoding: event, as: UTF8.self) + "\n\n")
+        await #expect(throws: expected) { try await stream.summarize(transcript: "input", model: "test", tokenSource: TestToken()) }
+        if code == "subscription_sharing_unsupported_capability" { #expect(expected.localizedDescription.contains("tools")) }
     }
 }
 

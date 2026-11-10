@@ -7,6 +7,7 @@ import Observation
 import RecorderAudio
 import RecorderCore
 import RecorderWhisper
+import RecorderSummary
 
 @MainActor @Observable
 final class AppEnvironment {
@@ -20,6 +21,19 @@ final class AppEnvironment {
     let termination = TerminationCoordinator()
     let calendar = CalendarModel(source: LiveCalendar())
     let summaryCredentials = SummaryCredentials()
+    let chatGPT = ChatGPTSignIn()
+    var summaryProviderReady: Bool {
+        switch settings.settings.summaryProvider {
+        case .apiKey: summaryCredentials.hasKey
+        case .chatGPT: chatGPT.signedIn && !chatGPT.signingOut
+        }
+    }
+    var summaryTokenSource: any BearerTokenSource {
+        switch settings.settings.summaryProvider {
+        case .apiKey: summaryCredentials.source
+        case .chatGPT: chatGPT.source
+        }
+    }
     /// Launch recovery plus the first readiness refresh. The UI does not wait for it; the headless runner does.
     let launched: Task<Void, Never>
 

@@ -24,10 +24,10 @@ struct SessionSummaryView: View {
                     if env.settings.settings.summaryConsent { start() }
                     else { confirming = true }
                 }
-                .disabled(!transcriptAvailable || !env.summaryCredentials.hasKey ||
+                .disabled(!transcriptAvailable || !env.summaryProviderReady ||
                           env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if !env.summaryCredentials.hasKey {
-                    Text("要約には設定でOpenAI APIキーを保存してください").font(.caption).foregroundStyle(.secondary)
+                if !env.summaryProviderReady {
+                    Text("要約には設定でChatGPTにサインインするか、APIキーを保存してください").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
@@ -43,26 +43,31 @@ struct SessionSummaryView: View {
         }
         .task(id: ref) {
             env.summaryCredentials.refresh()
+            await env.chatGPT.refresh()
             loadSummary()
         }
         .onDisappear { operation?.cancel() }
+        .onChange(of: env.settings.settings.summaryProvider) { _, _ in operation?.cancel() }
+        .onChange(of: env.summaryProviderReady) { _, ready in if !ready { operation?.cancel() } }
     }
 
     private func start() {
         guard operation == nil else { return }
         let model = env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = env.summaryTokenSource
         error = nil
         operation = Task {
             defer { operation = nil }
             do {
                 let transcript = try String(contentsOf: ref.folder.transcript, encoding: .utf8)
                 let result = try await ResponsesClient().summarize(transcript: transcript, model: model,
-                                                                  tokenSource: env.summaryCredentials.source)
+                                                                  tokenSource: source)
                 try Task.checkCancellation()
                 try await env.store.saveSummary(ref, markdown: result)
                 summary = result
             } catch is CancellationError { }
             catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+            await env.chatGPT.refresh()
         }
     }
 

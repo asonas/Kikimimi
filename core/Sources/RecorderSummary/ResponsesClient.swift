@@ -11,6 +11,7 @@ public enum SummaryError: Error, Sendable, Equatable, LocalizedError {
     case responseFailed(String)
     case incompleteStream
     case invalidStream
+    case chatGPT(code: String, param: String?)
 
     public var errorDescription: String? {
         switch self {
@@ -20,7 +21,23 @@ public enum SummaryError: Error, Sendable, Equatable, LocalizedError {
         case .responseFailed(let message): "要約に失敗しました: \(message)"
         case .incompleteStream: "要約の受信が完了する前に接続が終了しました"
         case .invalidStream: "要約の応答を読み取れませんでした"
+        case .chatGPT(let code, let param):
+            switch code {
+            case "subscription_sharing_usage_limit_exceeded": "ChatGPT プランの利用上限に達しました。chatgpt.com/settings/usage で確認できます。"
+            case "subscription_sharing_user_not_eligible": "このアカウントのプランでは使えません（Plus / Pro が対象）。"
+            case "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable": "一時的に使えません。しばらくしてからお試しください。"
+            case "subscription_sharing_invalid_user": "再度サインインしてください"
+            case "subscription_sharing_unsupported_capability": "未対応の機能が指定されました（\(param ?? "不明なパラメータ")）"
+            default: "ChatGPT の要約に失敗しました"
+            }
         }
+    }
+
+    static func chatGPTError(code: String?, param: String?) -> SummaryError? {
+        guard let code, ["subscription_sharing_usage_limit_exceeded", "subscription_sharing_user_not_eligible",
+                         "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable",
+                         "subscription_sharing_invalid_user", "subscription_sharing_unsupported_capability"].contains(code) else { return nil }
+        return .chatGPT(code: code, param: param)
     }
 }
 
@@ -84,10 +101,11 @@ public struct ResponsesClient: Sendable {
         defer { response.cancel() }
         return try await withTaskCancellationHandler {
             guard (200..<300).contains(response.status) else {
-                if response.status == 401 { throw SummaryError.invalidKey }
                 var data = Data()
                 for try await chunk in response.body { try Task.checkCancellation(); data.append(chunk) }
                 let error = try? JSONDecoder().decode(ErrorBody.self, from: data).error
+                if let mapped = SummaryError.chatGPTError(code: error?.code, param: error?.param) { throw mapped }
+                if response.status == 401 { throw SummaryError.invalidKey }
                 if response.status == 429 { throw SummaryError.rateLimited(code: error?.code) }
                 throw SummaryError.http(status: response.status, message: error?.message ?? "応答を確認できませんでした")
             }
@@ -105,6 +123,7 @@ public struct ResponsesClient: Sendable {
 private struct APIError: Decodable {
     let message: String?
     let code: String?
+    let param: String?
 }
 private struct ErrorBody: Decodable { let error: APIError }
 
@@ -144,6 +163,8 @@ private struct SummarySSEParser {
             let type: String?
             let delta: String?
             let message: String?
+            let code: String?
+            let param: String?
             let error: APIError?
             let response: Response?
         }
@@ -156,7 +177,9 @@ private struct SummarySSEParser {
             output += delta
         case "response.completed": return output
         case "response.failed", "error":
-            throw SummaryError.responseFailed(event.response?.error?.message ?? event.error?.message ?? event.message ?? "生成が完了しませんでした")
+            let error = event.response?.error ?? event.error ?? APIError(message: event.message, code: event.code, param: event.param)
+            if let mapped = SummaryError.chatGPTError(code: error.code, param: error.param) { throw mapped }
+            throw SummaryError.responseFailed(error.message ?? "生成が完了しませんでした")
         case "response.incomplete": throw SummaryError.incompleteStream
         default: break
         }

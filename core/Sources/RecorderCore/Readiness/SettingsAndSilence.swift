@@ -1,6 +1,10 @@
 import Foundation
 import Observation
 
+public enum SummaryProvider: String, Sendable, Codable, CaseIterable {
+    case apiKey, chatGPT
+}
+
 /// One Codable blob in UserDefaults under "settings.v1". Single schema, injectable suite for tests.
 public struct Settings: Sendable, Equatable, Codable {
     /// nil until the user confirms a mic in onboarding. There is deliberately no "system default" mode:
@@ -18,10 +22,11 @@ public struct Settings: Sendable, Equatable, Codable {
     public var calendarIDs: Set<String>?
     public var summaryModel = "gpt-6.1-sol"
     public var summaryConsent = false
+    public var summaryProvider = SummaryProvider.apiKey
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent
+        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent, summaryProvider
     }
 
     public init(from decoder: any Decoder) throws {
@@ -35,6 +40,7 @@ public struct Settings: Sendable, Equatable, Codable {
         calendarIDs = try c.decodeIfPresent(Set<String>.self, forKey: .calendarIDs)
         summaryModel = try c.decodeIfPresent(String.self, forKey: .summaryModel) ?? "gpt-6.1-sol"
         summaryConsent = try c.decodeIfPresent(Bool.self, forKey: .summaryConsent) ?? false
+        summaryProvider = try c.decodeIfPresent(SummaryProvider.self, forKey: .summaryProvider) ?? .apiKey
     }
 }
 
