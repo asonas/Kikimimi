@@ -6,7 +6,7 @@
 
 ### Issue tracker
 
-Issues live in Linear (project: interview-recorder), operated via the Linear MCP (`linear-server`). See `docs/agents/issue-tracker.md`.
+Issues live in Linear (team Asonas, project interview-recorder), operated via the Linear MCP (`claude.ai Linear`). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
