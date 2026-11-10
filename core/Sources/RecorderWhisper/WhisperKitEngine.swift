@@ -139,20 +139,47 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
 
     struct InstalledModel: Codable, Sendable {
         let variant: String
-        let folder: URL
-        let tokenizerFolder: URL
+        let folder: String
+        let tokenizerFolder: String
         let installedAt: Date
     }
 
-    private func installedModel() throws -> InstalledModel? {
+    private func installedModel() throws -> (folder: URL, tokenizerFolder: URL)? {
         let url = base.appendingPathComponent(ModelSpec.installMarker)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let marker = try decoder.decode(InstalledModel.self, from: Data(contentsOf: url))
         guard marker.variant == variant else { return nil }
-        try validate(folder: marker.folder, entries: ModelSpec.requiredEntries)
-        try validate(folder: marker.tokenizerFolder, entries: ModelSpec.tokenizerEntries)
-        return marker
+        let folder = try resolveMarkerPath(marker.folder)
+        let tokenizer = try resolveMarkerPath(marker.tokenizerFolder)
+        try validate(folder: folder, entries: ModelSpec.requiredEntries)
+        try validate(folder: tokenizer, entries: ModelSpec.tokenizerEntries)
+        return (folder, tokenizer)
+    }
+
+    private func resolveMarkerPath(_ value: String) throws -> URL {
+        var relative = value
+        let url = URL(string: value)
+        if value.hasPrefix("/") || url?.scheme != nil {
+            let absolute: URL
+            if value.hasPrefix("/") { absolute = URL(fileURLWithPath: value) }
+            else {
+                guard let url, url.isFileURL else { throw TranscriberError.modelNotInstalled }
+                absolute = url
+            }
+            let root = base.standardizedFileURL.path + "/"
+            if absolute.path.hasPrefix(root) {
+                relative = String(absolute.path.dropFirst(root.count))
+            } else if let legacy = absolute.path.range(of: "/InterviewRecorder/Models/") {
+                relative = String(absolute.path[legacy.upperBound...])
+            } else { throw TranscriberError.modelNotInstalled }
+        }
+        return base.appendingPathComponent(relative)
+    }
+
+    private func relativePath(_ folder: URL) -> String {
+        let root = base.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        return String(folder.resolvingSymlinksInPath().standardizedFileURL.path.dropFirst(root.count))
     }
 
     private func validate(folder: URL, entries: [String]) throws {
@@ -185,7 +212,8 @@ public actor WhisperKitEngine: Transcriber, ModelProvider {
         try Task.checkCancellation()
         try validate(folder: folder, entries: ModelSpec.requiredEntries)
         try validate(folder: tokenizer, entries: ModelSpec.tokenizerEntries)
-        let marker = InstalledModel(variant: variant, folder: folder, tokenizerFolder: tokenizer, installedAt: Date())
+        let marker = InstalledModel(variant: variant, folder: relativePath(folder),
+                                    tokenizerFolder: relativePath(tokenizer), installedAt: Date())
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(marker)

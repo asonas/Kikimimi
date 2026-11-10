@@ -66,8 +66,8 @@ private func installedTestModel() throws -> URL {
     }
     for entry in ModelSpec.tokenizerEntries { try Data("{}".utf8).write(to: tokenizer.appendingPathComponent(entry)) }
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-    try encoder.encode(WhisperKitEngine.InstalledModel(variant: "test", folder: folder,
-        tokenizerFolder: tokenizer, installedAt: Date())).write(to: root.appendingPathComponent(ModelSpec.installMarker))
+    try encoder.encode(WhisperKitEngine.InstalledModel(variant: "test", folder: "model",
+        tokenizerFolder: "tokenizer", installedAt: Date())).write(to: root.appendingPathComponent(ModelSpec.installMarker))
     return root
 }
 

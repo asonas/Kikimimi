@@ -26,8 +26,62 @@ private func modelFiles(_ base: URL) throws -> (model: URL, tokenizer: URL) {
 
 private func writeMarker(_ base: URL, folder: URL, tokenizer: URL, modelVariant: String = variant) throws {
     let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-    let marker = WhisperKitEngine.InstalledModel(variant: modelVariant, folder: folder, tokenizerFolder: tokenizer, installedAt: Date(timeIntervalSince1970: 1000))
+    let root = base.path + "/"
+    let modelPath = folder.path.hasPrefix(root) ? String(folder.path.dropFirst(root.count)) : folder.path
+    let tokenizerPath = tokenizer.path.hasPrefix(root) ? String(tokenizer.path.dropFirst(root.count)) : tokenizer.path
+    let marker = WhisperKitEngine.InstalledModel(variant: modelVariant, folder: modelPath, tokenizerFolder: tokenizerPath, installedAt: Date(timeIntervalSince1970: 1000))
     try encoder.encode(marker).write(to: base.appendingPathComponent(ModelSpec.installMarker), options: .atomic)
+}
+
+private func writePathMarker(_ base: URL, folder: String, tokenizer: String) throws {
+    let object = ["variant": variant, "folder": folder, "tokenizerFolder": tokenizer,
+                  "installedAt": "2026-11-10T00:00:00Z"]
+    try JSONSerialization.data(withJSONObject: object).write(to: base.appendingPathComponent(ModelSpec.installMarker))
+}
+
+@Test func modelStatusRelativeMarkerSurvivesBaseRename() async throws {
+    let root = try modelRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let base = root.appendingPathComponent("before/Models")
+    _ = try modelFiles(base)
+    try writePathMarker(base, folder: "model", tokenizer: "tokenizer")
+    #expect(await WhisperKitEngine(base: base, variant: variant).status() == .ready)
+    let moved = root.appendingPathComponent("renamed")
+    try FileManager.default.moveItem(at: base.deletingLastPathComponent(), to: moved)
+    #expect(await WhisperKitEngine(base: moved.appendingPathComponent("Models"), variant: variant).status() == .ready)
+}
+
+@Test func modelStatusReadsLegacyAbsoluteMarkerWithoutRewritingIt() async throws {
+    let base = try modelRoot(); defer { try? FileManager.default.removeItem(at: base) }
+    let (folder, tokenizer) = try modelFiles(base)
+    for (modelPath, tokenizerPath) in [
+        (folder.absoluteString, tokenizer.absoluteString),
+        ("file:///old/Library/Application%20Support/InterviewRecorder/Models/model/",
+         "file:///old/Library/Application%20Support/InterviewRecorder/Models/tokenizer/")
+    ] {
+        try writePathMarker(base, folder: modelPath, tokenizer: tokenizerPath)
+        let markerURL = base.appendingPathComponent(ModelSpec.installMarker)
+        let before = try Data(contentsOf: markerURL)
+        #expect(await WhisperKitEngine(base: base, variant: variant).status() == .ready)
+        #expect(try Data(contentsOf: markerURL) == before)
+    }
+}
+
+@Test func modelStatusRejectsAbsoluteAndRelativeEscapes() async throws {
+    let root = try modelRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let base = root.appendingPathComponent("base")
+    _ = try modelFiles(base)
+    let outside = root.appendingPathComponent("outside")
+    let (folder, tokenizer) = try modelFiles(outside)
+    for (modelPath, tokenizerPath) in [
+        (folder.absoluteString, tokenizer.absoluteString),
+        (folder.path, tokenizer.path),
+        ("../outside/model", "tokenizer"),
+        ("model", "../outside/tokenizer"),
+        ("file:///old/InterviewRecorder/Models/../outside/model", "tokenizer")
+    ] {
+        try writePathMarker(base, folder: modelPath, tokenizer: tokenizerPath)
+        #expect(await WhisperKitEngine(base: base, variant: variant).status() == .notInstalled)
+    }
 }
 
 private final class InstallEvents: @unchecked Sendable {
@@ -129,6 +183,11 @@ private func waitForGate(_ gate: InstallerGate) async {
     #expect(events.statuses == [.downloading(fraction: 0), .downloading(fraction: 0), .downloading(fraction: 0.5),
                                .downloading(fraction: 1), .optimizing, .ready])
     #expect(await engine.status() == .ready)
+    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    let marker = try decoder.decode(WhisperKitEngine.InstalledModel.self,
+        from: Data(contentsOf: base.appendingPathComponent(ModelSpec.installMarker)))
+    #expect(marker.folder == "model")
+    #expect(marker.tokenizerFolder == "tokenizer")
     try await engine.install { events.append($0) }
     #expect(await fake.downloads == 1)
     #expect(await fake.prewarms == 1)
