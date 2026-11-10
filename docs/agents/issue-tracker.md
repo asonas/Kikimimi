@@ -20,7 +20,7 @@ If the Linear MCP tools are unavailable or return an authentication error, tell 
 - **Sub-issues**: set the parent via `save_issue` (`parentId`).
 - **Blocking**: Linear's native "blocked by" relation. A ticket is startable when it has no open (not Done / Canceled) blockers.
 - **Close**: post the explanation with `save_comment` first, then move the issue to Done (completed) or Canceled (not actioned).
-- **Titles and descriptions**: follow the `linear-issue` skill (start with a verb, keep it short, no user-story format).
+- **Titles and descriptions**: start the title with a verb, keep it short, and avoid the user-story format. Use the `to-tickets` skill to file new tickets.
 
 ## When a skill says "publish to the issue tracker"
 
