@@ -126,14 +126,16 @@ private func golden(_ name: String) throws -> String {
     #expect(!disabled.excludes(segment("♪")))
 }
 
-@Test func readingPolicyStockPhrasesRequireLowConfidenceAndExactMatch() {
-    for text in ["ご視聴ありがとうございました", " ご視聴ありがとうございました。 ", "チャンネル登録お願いします！", "字幕:"] {
-        #expect(ReadingPolicy.standard.excludes(segment(text, logprob: -0.501)))
-        #expect(!ReadingPolicy.standard.excludes(segment(text, logprob: -0.5)))
+@Test func readingPolicyStockPhrasesRequireOnlyExactMatchRegardlessOfConfidence() {
+    for text in ["ご視聴ありがとうございました", "ご視聴ありがとうございました。", " ご視聴ありがとうございました。 ", "チャンネル登録お願いします！", "字幕:"] {
+        for logprob in [-0.501, -0.5, -0.1] {
+            #expect(ReadingPolicy.standard.excludes(segment(text, logprob: logprob)))
+        }
     }
     #expect(!ReadingPolicy.standard.excludes(segment("本日はありがとうございました。", logprob: -0.8)))
     #expect(!ReadingPolicy.standard.excludes(segment("ありがとうございました。")))
     #expect(!ReadingPolicy.standard.excludes(segment("ご視聴ありがとうございました、と発言した理由です", logprob: -0.8)))
+    #expect(!ReadingPolicy.standard.excludes(segment("ご視聴ありがとうございましたと言われた", logprob: -0.1)))
 }
 
 @Test func transcriptReaderCoalescesOnlyBelowGapAndSpanBoundaries() {

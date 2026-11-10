@@ -56,9 +56,8 @@ struct ReadingPolicy: Sendable, Equatable {
     var compressionRatioMax = 2.4
     /// Drop text with no letters/digits/CJK (".", "…", "♪").
     var dropSymbolOnly = true
-    /// Drop short low-confidence stock phrases ("ご視聴ありがとうございました" etc.). Single list, here.
+    /// Drop exact normalized stock phrases ("ご視聴ありがとうございました" etc.), regardless of confidence.
     var stockHallucinations: Set<String> = ["ご視聴ありがとうございました", "チャンネル登録お願いします", "字幕:"]
-    var stockLogprobMax = -0.5
     /// Merge consecutive same-speaker segments if the gap is below this and the merged line stays under `maxLineSeconds`.
     var coalesceGap = 2.0, maxLineSeconds = 45.0
     static let standard = ReadingPolicy()
@@ -74,7 +73,7 @@ struct ReadingPolicy: Sendable, Equatable {
             }
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return segment.avgLogprob < stockLogprobMax && stockHallucinations.contains { phrase($0) == phrase(segment.text) }
+        return stockHallucinations.contains { phrase($0) == phrase(segment.text) }
     }
 }
 
