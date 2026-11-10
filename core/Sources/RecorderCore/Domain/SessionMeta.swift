@@ -14,6 +14,7 @@ public struct SessionMeta: Sendable, Equatable, Codable {
     public var company: String
     public var title: String?
     public var event: SessionEvent?
+    public var export: SessionExport?
     /// IANA identifier at capture time, so local date and folder name are re-derivable.
     public var timeZone: String
     public var startedAt: Date
@@ -30,7 +31,14 @@ public struct SessionMeta: Sendable, Equatable, Codable {
         self.startedAt = startedAt; self.capture = .inProgress; self.app = app
         self.clock = "mach-host-seconds"; self.tracks = tracks
         self.event = event
+        self.export = nil
     }
+}
+
+public struct SessionExport: Sendable, Equatable, Codable {
+    public let path: String
+    public let at: Date
+    public init(path: String, at: Date) { self.path = path; self.at = at }
 }
 
 public struct AppInfo: Sendable, Equatable, Codable {
@@ -132,7 +140,7 @@ extension TrackSource: Codable {
 
 extension SessionMeta {
     private enum Keys: String, CodingKey {
-        case schemaVersion, id, company, title, event, timeZone, startedAt, endedAt, endReason, app, clock, tracks
+        case schemaVersion, id, company, title, event, export, timeZone, startedAt, endedAt, endReason, app, clock, tracks
     }
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -144,6 +152,7 @@ extension SessionMeta {
         company = try c.decode(String.self, forKey: .company)
         title = try c.decodeIfPresent(String.self, forKey: .title)
         event = try c.decodeIfPresent(SessionEvent.self, forKey: .event)
+        export = try c.decodeIfPresent(SessionExport.self, forKey: .export)
         timeZone = try c.decode(String.self, forKey: .timeZone)
         startedAt = try c.decode(Date.self, forKey: .startedAt)
         let endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
@@ -162,6 +171,7 @@ extension SessionMeta {
         try c.encode(schemaVersion, forKey: .schemaVersion); try c.encode(id, forKey: .id)
         try c.encode(company, forKey: .company); try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(event, forKey: .event)
+        try c.encodeIfPresent(export, forKey: .export)
         try c.encode(timeZone, forKey: .timeZone); try c.encode(startedAt, forKey: .startedAt)
         if case let .finished(endedAt, reason) = capture {
             try c.encode(endedAt, forKey: .endedAt); try c.encode(reason, forKey: .endReason)

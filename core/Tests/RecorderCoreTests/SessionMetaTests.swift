@@ -28,11 +28,25 @@ private func object(_ data: Data) throws -> [String: Any] {
         let data = try fixture(name)
         let meta = try decoder().decode(SessionMeta.self, from: data)
         #expect(meta.event == nil)
+        #expect(meta.export == nil)
         let encoded = try encoder().encode(meta)
         // Compare JSON values to pin the wire shape, independently of whitespace and key order.
         #expect(NSDictionary(dictionary: try object(encoded)) == NSDictionary(dictionary: try object(data)))
         #expect(try decoder().decode(SessionMeta.self, from: encoded) == meta)
     }
+}
+
+@Test func sessionExportRecordRoundTripsWithoutSchemaChange() throws {
+    var meta = try decoder().decode(SessionMeta.self, from: fixture("session-in-progress"))
+    meta.export = SessionExport(path: "/tmp/notes/session.md", at: Date(timeIntervalSince1970: 1_800_000_000))
+    let encoded = try encoder().encode(meta)
+    #expect(try decoder().decode(SessionMeta.self, from: encoded) == meta)
+    #expect(meta.schemaVersion == 1)
+    let exported = try #require(try object(encoded)["export"] as? [String: Any])
+    #expect(exported["path"] as? String == "/tmp/notes/session.md")
+    #expect(exported["at"] as? String == "2027-01-15T08:00:00Z")
+    meta.export = nil
+    #expect(try object(encoder().encode(meta))["export"] == nil)
 }
 
 @Test func sessionEventSnapshotRoundTripsWithoutChangingSchema() throws {

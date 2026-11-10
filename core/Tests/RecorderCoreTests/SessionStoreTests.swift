@@ -54,6 +54,46 @@ private func segments(version: Int = 1) -> SegmentsFile {
                  tracks: .init(remote: .transcribed), segments: [])
 }
 
+@Test func sessionStoreExportsManuallyOverwritesSameNoteAndRecordsHistory() async throws {
+    let root = try temporaryRoot(), destination = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: destination) }
+    let store = store(root), (ref, lease) = try await create(store)
+    lease.release()
+    try await store.saveTranscription(ref, segments())
+    try await store.saveSummary(ref, markdown: "## 概要\nfirst")
+    #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+    let originalSegments = try Data(contentsOf: ref.folder.segments)
+    let originalTranscript = try Data(contentsOf: ref.folder.transcript)
+    let first = try await store.exportNote(ref, to: destination)
+    #expect(first.path == destination.appendingPathComponent(ref.folder.url.lastPathComponent + ".md").path)
+    #expect(try String(contentsOf: URL(fileURLWithPath: first.path), encoding: .utf8).contains("### 概要\nfirst"))
+    #expect(try await store.meta(of: ref).export == first)
+    try await store.saveSummary(ref, markdown: "## 概要\nsecond")
+    let second = try await store.exportNote(ref, to: destination)
+    #expect(first.path == second.path)
+    #expect(try String(contentsOf: URL(fileURLWithPath: first.path), encoding: .utf8).contains("### 概要\nsecond"))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).count == 1)
+    #expect(try Data(contentsOf: ref.folder.segments) == originalSegments)
+    #expect(try Data(contentsOf: ref.folder.transcript) == originalTranscript)
+}
+
+@Test func sessionStoreExportDoesNotCreateMissingFolderOrRecordFailedWrites() async throws {
+    let root = try temporaryRoot(), destination = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: destination) }
+    let store = SessionStore(root: root, now: { start }, timeZone: { tokyo }, atomicWrite: { data, url in
+        if url.deletingLastPathComponent().path == destination.path { throw CocoaError(.fileWriteNoPermission) }
+        try data.write(to: url, options: .atomic)
+    })
+    let (ref, lease) = try await create(store); lease.release()
+    try await store.saveTranscription(ref, segments())
+    let absent = destination.appendingPathComponent("missing")
+    await #expect(throws: SessionExportError.folderMissing) { try await store.exportNote(ref, to: absent) }
+    #expect(!FileManager.default.fileExists(atPath: absent.path))
+    await #expect(throws: CocoaError.self) { try await store.exportNote(ref, to: destination) }
+    #expect(try await store.meta(of: ref).export == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+}
+
 @Test func sessionStoreSavesCompleteSummaryAndKeepsOnePreviousVersion() async throws {
     let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let store = store(root)

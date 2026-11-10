@@ -39,6 +39,7 @@ struct SetupView: View {
                     modelRow
                     CalendarSettingsView(env: env) { openPrivacy("Calendars") }
                     SummarySettingsView(env: env)
+                    ExportSettingsView(env: env)
                 }
             }
             .padding(24)

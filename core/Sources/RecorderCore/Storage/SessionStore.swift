@@ -317,6 +317,28 @@ public actor SessionStore {
         try atomicWrite(Data(markdown.utf8), ref.folder.summary)
     }
 
+    @discardableResult
+    public func exportNote(_ ref: SessionRef, to destination: URL) throws -> SessionExport {
+        var meta = try writableMeta(ref)
+        guard let segments = try segments(of: ref) else { throw CocoaError(.fileNoSuchFile) }
+        var directory: ObjCBool = false
+        guard destination.isFileURL,
+              FileManager.default.fileExists(atPath: destination.path, isDirectory: &directory), directory.boolValue else {
+            throw SessionExportError.folderMissing
+        }
+        let summary = FileManager.default.fileExists(atPath: ref.folder.summary.path)
+            ? try String(contentsOf: ref.folder.summary, encoding: .utf8) : nil
+        let exported = SessionExport(path: destination.appendingPathComponent(ref.folder.url.lastPathComponent + ".md").path, at: now())
+        let markdown = SessionNoteRenderer.render(meta: meta, segments: segments, summary: summary, now: exported.at)
+        try Task.checkCancellation()
+        // The default atomic writer creates its temporary file in the destination before replacing the note.
+        try atomicWrite(Data(markdown.utf8), URL(fileURLWithPath: exported.path))
+        meta.export = exported
+        do { try writeMeta(meta, to: ref.folder) }
+        catch { throw SessionExportError.metadataFailed(path: exported.path) }
+        return exported
+    }
+
     private func refuseNewerSegments(_ ref: SessionRef) throws {
         struct Header: Decodable { let schemaVersion: Int }
         guard FileManager.default.fileExists(atPath: ref.folder.segments.path) else { return }

@@ -23,10 +23,11 @@ public struct Settings: Sendable, Equatable, Codable {
     public var summaryModel = "gpt-6.1-sol"
     public var summaryConsent = false
     public var summaryProvider = SummaryProvider.apiKey
+    public var exportFolder: String?
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent, summaryProvider
+        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent, summaryProvider, exportFolder
     }
 
     public init(from decoder: any Decoder) throws {
@@ -41,6 +42,7 @@ public struct Settings: Sendable, Equatable, Codable {
         summaryModel = try c.decodeIfPresent(String.self, forKey: .summaryModel) ?? "gpt-6.1-sol"
         summaryConsent = try c.decodeIfPresent(Bool.self, forKey: .summaryConsent) ?? false
         summaryProvider = try c.decodeIfPresent(SummaryProvider.self, forKey: .summaryProvider) ?? .apiKey
+        exportFolder = try c.decodeIfPresent(String.self, forKey: .exportFolder)
     }
 }
 

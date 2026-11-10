@@ -117,9 +117,8 @@ enum TranscriptRenderer {
         formatter.timeZone = TimeZone(identifier: meta.timeZone) ?? TimeZone(secondsFromGMT: 0)!
         formatter.dateFormat = "yyyy-MM-dd"
         let date = formatter.string(from: meta.startedAt)
-        func heading(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-        var lines = ["---", "type: interview-log", "company: \(quoted(meta.company))", "date: \(quoted(date))",
-                     "duration: \(quoted(TranscriptTimestamp.format(SessionTimeline.duration(of: meta))))", "---", "",
+        var lines = ["---", "type: interview-log", "company: \(YAMLScalar.quoted(meta.company))", "date: \(YAMLScalar.quoted(date))",
+                     "duration: \(YAMLScalar.quoted(TranscriptTimestamp.format(SessionTimeline.duration(of: meta))))", "---", "",
                      "# \(heading(meta.company)) \(heading(meta.title ?? "面接"))（\(date)）", ""]
         if let event = meta.event {
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
@@ -131,7 +130,11 @@ enum TranscriptRenderer {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func quoted(_ value: String) -> String {
+    static func heading(_ value: String) -> String { value.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+}
+
+enum YAMLScalar {
+    static func quoted(_ value: String) -> String {
         var result = "\""
         for scalar in value.unicodeScalars {
             switch scalar.value {
@@ -148,7 +151,7 @@ enum TranscriptRenderer {
     }
 }
 
-private enum TranscriptTimestamp {
+enum TranscriptTimestamp {
     static func format(_ seconds: Double) -> String {
         let whole = seconds.isFinite ? max(0, seconds.rounded(.down)) : 0
         return String(format: "%02.0f:%02.0f:%02.0f", (whole / 3600).rounded(.down),

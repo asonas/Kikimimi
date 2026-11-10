@@ -5,11 +5,16 @@ import RecorderCore
 struct SessionDetailView: View {
     let env: AppEnvironment
     let session: SessionListing
+    @Environment(\.openSettings) private var openSettings
     @State private var meta: SessionMeta?
     @State private var metadataError: String?
     @State private var transcript: TranscriptDisplay = .loading
     @State private var markdownAvailable = false
     @State private var copyMessage: String?
+    @State private var segmentsAvailable = false
+    @State private var exporting = false
+    @State private var exportError: String?
+    @State private var exportOutdated = false
 
     private enum TranscriptDisplay: Equatable {
         case loading, absent, loaded([TranscriptLine]), failed(String)
@@ -28,6 +33,7 @@ struct SessionDetailView: View {
                     }
                 }
                 actions
+                exportStatus
                 jobProgress
                 if let copyMessage { Text(copyMessage).font(.caption).foregroundStyle(.secondary) }
                 Divider()
@@ -127,6 +133,41 @@ struct SessionDetailView: View {
         }
         Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([session.ref.folder.url]) }
         Button("Markdown をコピー") { copyMarkdown() }.disabled(!markdownAvailable)
+        if let path = env.settings.settings.exportFolder {
+            Button("ノートを書き出す") { exportNote(to: path) }
+                .disabled(!segmentsAvailable || exporting || env.termination.requested)
+        } else {
+            Button("書き出し先を設定") { openSettings() }
+        }
+    }
+
+    @ViewBuilder private var exportStatus: some View {
+        if let exported = meta?.export {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(exported.path) に書き出しました（\(SessionDate.string(exported.at))）")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Button("書き出したノートを Finder で表示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: exported.path)])
+                }
+                .font(.caption)
+                if exportOutdated {
+                    Text("書き出し後に書き起こしか要約が更新されています").font(.caption).foregroundStyle(.orange)
+                }
+            }
+        }
+        if let exportError { Text(exportError).foregroundStyle(.red).textSelection(.enabled) }
+    }
+
+    private func exportNote(to path: String) {
+        guard !exporting else { return }
+        exporting = true; exportError = nil
+        Task {
+            defer { exporting = false }
+            do {
+                try await env.store.exportNote(session.ref, to: URL(fileURLWithPath: path, isDirectory: true))
+                await refresh()
+            } catch { exportError = "書き出せませんでした: \(error.localizedDescription)" }
+        }
     }
 
     @ViewBuilder private var jobProgress: some View {
@@ -183,8 +224,15 @@ struct SessionDetailView: View {
             let lines = try await env.store.transcriptLines(of: session.ref)
             guard !Task.isCancelled else { return }
             transcript = lines.map(TranscriptDisplay.loaded) ?? .absent
-        } catch { if !Task.isCancelled { transcript = .failed(error.localizedDescription) } }
+            segmentsAvailable = lines != nil
+        } catch { if !Task.isCancelled { transcript = .failed(error.localizedDescription); segmentsAvailable = false } }
         markdownAvailable = FileManager.default.fileExists(atPath: session.ref.folder.transcript.path)
+        if let exported = meta?.export {
+            let dates = [session.ref.folder.transcript, session.ref.folder.summary].compactMap {
+                try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
+            exportOutdated = SessionExportFreshness.isOutdated(exportedAt: exported.at, modifiedAt: dates)
+        } else { exportOutdated = false }
     }
 
     private func copyMarkdown() {
