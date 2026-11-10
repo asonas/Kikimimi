@@ -20,6 +20,7 @@ struct KikimimiApp: App {
         Window("Kikimimi", id: "main") { MainWindowView(env: env) }
             .defaultSize(width: 1080, height: 760)
         Settings { SetupView(env: env) }
+            .defaultSize(width: 720, height: 520)
         Window("新しい録音", id: "new-recording") { NewRecordingView(env: env) }
             .windowResizability(.contentSize)
     }
@@ -49,7 +50,10 @@ private struct LaunchIcon: View {
                 }
                 AppDelegate.showMainWindow?()
                 await env.launched.value
-                if !env.readiness.readiness.canRecord { openSettings() }
+                if !env.readiness.readiness.canRecord {
+                    UserDefaults.standard.set(SettingsPane.recording.rawValue, forKey: "settings.selectedPane")
+                    openSettings()
+                }
             }
     }
 

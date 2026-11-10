@@ -57,6 +57,7 @@ struct SummaryModelPicker: View {
                         }
                         ForEach(models) { model in Text(model.displayName ?? model.id).tag(model.id) }
                     }
+                    .pickerStyle(.menu)
                 }
                 if env.summaryModels.isLoading(provider) {
                     ProgressView().controlSize(.small).accessibilityLabel("モデル一覧を取得中")
