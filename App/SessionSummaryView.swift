@@ -32,8 +32,7 @@ struct SessionSummaryView: View {
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             if let summary {
-                Text((try? AttributedString(markdown: summary)) ?? AttributedString(summary))
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                SummaryMarkdownView(markdown: summary)
             }
         }
         .confirmationDialog("書き起こしをOpenAIに送信しますか？", isPresented: $confirming, titleVisibility: .visible) {
@@ -71,5 +70,38 @@ struct SessionSummaryView: View {
         guard FileManager.default.fileExists(atPath: ref.folder.summary.path) else { summary = nil; return }
         do { summary = try String(contentsOf: ref.folder.summary, encoding: .utf8) }
         catch { self.error = "要約を読み込めませんでした: \(error.localizedDescription)" }
+    }
+}
+
+private struct SummaryMarkdownView: View {
+    let markdown: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(markdown.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
+                switch SummaryLine.classify(String(line)) {
+                case .heading(let text):
+                    Text(inline(text)).font(.title3.bold()).padding(.top, 12)
+                        .accessibilityAddTraits(.isHeader)
+                case .bullet(let text, let depth):
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•")
+                        Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.leading, 12 + CGFloat(depth) * 16)
+                case .paragraph(let text):
+                    Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
+                case .blank:
+                    Color.clear.frame(height: 8).accessibilityHidden(true)
+                }
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
     }
 }
