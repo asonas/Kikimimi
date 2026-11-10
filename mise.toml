@@ -22,6 +22,25 @@ APP_PATH = "build/development/Build/Products/Debug/Kikimimi.app"
 description = "Generate the Xcode project from project.yml"
 run = "xcodegen generate"
 
+[tasks.icon]
+description = "Render the macOS AppIcon PNGs from App/Icon/AppIcon.svg (requires librsvg)"
+run = """
+set -euo pipefail
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+  echo 'error: rsvg-convert is required; install librsvg with brew install librsvg.' >&2
+  exit 1
+fi
+output=App/Assets.xcassets/AppIcon.appiconset
+mkdir -p "$output"
+for size in 16 32 128 256 512; do
+  for scale in 1 2; do
+    pixels=$((size * scale))
+    rsvg-convert --width "$pixels" --height "$pixels" \\
+      --output "$output/icon_${size}x${size}@${scale}x.png" App/Icon/AppIcon.svg
+  done
+done
+"""
+
 [tasks.test]
 description = "Run every test in core/ (no signing, no TCC; RecorderWhisper's model test is gated by IR_INTEGRATION=1)"
 run = "swift test --package-path core"
