@@ -18,6 +18,7 @@ final class AppEnvironment {
     let modelVariant: String
     let modelVariantOverridden: Bool
     let termination = TerminationCoordinator()
+    let calendar = CalendarModel(source: LiveCalendar())
     /// Launch recovery plus the first readiness refresh. The UI does not wait for it; the headless runner does.
     let launched: Task<Void, Never>
 

@@ -2,6 +2,14 @@ import SwiftUI
 import RecorderCore
 
 enum SessionDate {
+    static func range(start: Date, end: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = Calendar.current.isDate(start, inSameDayAs: end) ? "HH:mm" : "yyyy/MM/dd HH:mm"
+        return "\(string(start))〜\(formatter.string(from: end))"
+    }
+
     static func string(_ date: Date, timeZone: TimeZone? = nil) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")

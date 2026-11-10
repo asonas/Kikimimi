@@ -11,35 +11,42 @@ struct SetupView: View {
     @State private var lastLoggedRows: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("録音の準備").font(.title2).bold()
-            VStack(alignment: .leading, spacing: 16) {
-                row("画面収録", detail: screenText, ready: env.readiness.readiness.screen == .ready) {
-                    switch env.readiness.readiness.screen {
-                    case .notGranted(let requested):
-                        if requested { Button("システム設定を開く") { openPrivacy("ScreenCapture") } }
-                        else { Button("許可を要求") {
-                            env.settings.settings.screenCaptureRequested = true
-                            env.readiness.requestScreenCapture()
-                        } }
-                    case .grantedNeedsRelaunch: Button("再起動") { env.readiness.relaunchApp() }
-                    case .grantedButFailing: Button("システム設定を開く") { openPrivacy("ScreenCapture") }
-                    case .ready: EmptyView()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("録音の準備").font(.title2).bold()
+                VStack(alignment: .leading, spacing: 16) {
+                    row("画面収録", detail: screenText, ready: env.readiness.readiness.screen == .ready) {
+                        switch env.readiness.readiness.screen {
+                        case .notGranted(let requested):
+                            if requested { Button("システム設定を開く") { openPrivacy("ScreenCapture") } }
+                            else { Button("許可を要求") {
+                                env.settings.settings.screenCaptureRequested = true
+                                env.readiness.requestScreenCapture()
+                            } }
+                        case .grantedNeedsRelaunch: Button("再起動") { env.readiness.relaunchApp() }
+                        case .grantedButFailing: Button("システム設定を開く") { openPrivacy("ScreenCapture") }
+                        case .ready: EmptyView()
+                        }
                     }
-                }
-                row("マイク", detail: micText, ready: env.readiness.readiness.mic == .authorized) {
-                    switch env.readiness.readiness.mic {
-                    case .notDetermined: Button("許可を要求") { Task { await env.readiness.requestMicrophone() } }
-                    case .denied, .restricted: Button("システム設定を開く") { openPrivacy("Microphone") }
-                    case .authorized: EmptyView()
+                    row("マイク", detail: micText, ready: env.readiness.readiness.mic == .authorized) {
+                        switch env.readiness.readiness.mic {
+                        case .notDetermined: Button("許可を要求") { Task { await env.readiness.requestMicrophone() } }
+                        case .denied, .restricted: Button("システム設定を開く") { openPrivacy("Microphone") }
+                        case .authorized: EmptyView()
+                        }
                     }
+                    microphoneInput
+                    modelRow
+                    CalendarSettingsView(env: env) { openPrivacy("Calendars") }
                 }
-                microphoneInput
-                modelRow
             }
+            .padding(24)
         }
-        .padding(24)
         .frame(width: 580)
+        .frame(idealHeight: 720, maxHeight: 800)
+        .task { refreshCalendar() }
+        .onChange(of: env.settings.settings.calendarIDs) { _, _ in refreshCalendar() }
+        .onReceive(NotificationCenter.default.publisher(for: LiveCalendar.changedNotification).receive(on: RunLoop.main)) { _ in refreshCalendar() }
         .task {
             await env.launched.value
             while !Task.isCancelled {
@@ -65,9 +72,12 @@ struct SetupView: View {
             if phase == .active { Task { await env.readiness.refresh() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshCalendar()
             Task { await env.readiness.refresh() }
         }
     }
+
+    private func refreshCalendar() { env.calendar.refresh(calendars: env.settings.settings.calendarIDs) }
 
     private var previewKey: String {
         let uid = env.settings.settings.mic?.deviceUID ?? ""

@@ -60,10 +60,12 @@ targets:
         # on purpose. The AppDelegate's single-instance nicety skips those launch modes; recovery safety comes from the
         # per-session flock lease, not from instance counting.
         NSMicrophoneUsageDescription: 面接の音声を、相手側の音声とは別トラックで録音するためにマイクを使用します。
+        NSCalendarsFullAccessUsageDescription: 面接の予定を表示し、録音の開始や保存名に使うためにカレンダーを読み取ります。
     entitlements:
       path: App/Kikimimi.entitlements
       properties:
         com.apple.security.device.audio-input: true
+        com.apple.security.personal-information.calendars: true
 schemes:
   Kikimimi:
     build:

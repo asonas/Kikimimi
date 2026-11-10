@@ -14,6 +14,8 @@ public struct Settings: Sendable, Equatable, Codable {
     public var screenCaptureRequested = false
     /// nil = ~/Library/Application Support/Kikimimi/Recordings (no UI in Phase 1; plumbing only).
     public var recordingsRoot: URL?
+    /// nil selects every calendar, including calendars added later.
+    public var calendarIDs: Set<String>?
     public init() {}
 }
 

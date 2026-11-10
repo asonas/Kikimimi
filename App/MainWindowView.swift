@@ -24,29 +24,50 @@ struct MainWindowView: View {
             }
             NavigationSplitView {
                 List(selection: $selection) {
-                    ForEach(orderedSessions) { session in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(session.company).font(.headline).lineLimit(1)
-                            if let title = session.title { Text(title).lineLimit(1) }
-                            Text(SessionDate.string(session.startedAt))
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Text(job(for: session)?.label ?? session.state.label)
-                                    .font(.caption).padding(.horizontal, 6).padding(.vertical, 3)
-                                    .background(.quaternary, in: Capsule())
-                                if let duration = session.durationSeconds {
-                                    Text(Duration.seconds(duration), format: .time(pattern: .hourMinuteSecond))
-                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    if env.calendar.access == .authorized, !env.calendar.events.isEmpty {
+                        Section("これからの予定") {
+                            ForEach(env.calendar.events) { event in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(SessionDate.range(start: event.start, end: event.end))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(event.title).lineLimit(2)
+                                        if event.meetingURL != nil {
+                                            Image(systemName: "video").font(.caption)
+                                                .accessibilityLabel("オンライン会議リンクあり")
+                                        }
+                                    }
                                 }
+                                .padding(.vertical, 4)
+                                .selectionDisabled()
                             }
                         }
-                        .padding(.vertical, 6)
-                        .tag(session.id)
                     }
-                    if let listError { Text(listError).foregroundStyle(.red) }
+                    Section("録音") {
+                        ForEach(orderedSessions) { session in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(session.company).font(.headline).lineLimit(1)
+                                if let title = session.title { Text(title).lineLimit(1) }
+                                Text(SessionDate.string(session.startedAt))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                HStack {
+                                    Text(job(for: session)?.label ?? session.state.label)
+                                        .font(.caption).padding(.horizontal, 6).padding(.vertical, 3)
+                                        .background(.quaternary, in: Capsule())
+                                    if let duration = session.durationSeconds {
+                                        Text(Duration.seconds(duration), format: .time(pattern: .hourMinuteSecond))
+                                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 6)
+                            .tag(session.id)
+                        }
+                        if let listError { Text(listError).foregroundStyle(.red) }
+                    }
                 }
                 .overlay {
-                    if sessions.isEmpty, listError == nil {
+                    if sessions.isEmpty, listError == nil, env.calendar.events.isEmpty {
                         Text("録音はまだありません").foregroundStyle(.secondary)
                     }
                 }
@@ -70,6 +91,10 @@ struct MainWindowView: View {
                 .disabled(env.recorder.phase.isCapturing || env.termination.requested)
         }
         .sheet(isPresented: $presentingRecording) { NewRecordingView(env: env) }
+        .task { refreshCalendar() }
+        .onChange(of: env.settings.settings.calendarIDs) { _, _ in refreshCalendar() }
+        .onReceive(NotificationCenter.default.publisher(for: LiveCalendar.changedNotification).receive(on: RunLoop.main)) { _ in refreshCalendar() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshCalendar() }
         .task {
             await env.launched.value
             while !Task.isCancelled {
@@ -81,6 +106,8 @@ struct MainWindowView: View {
             if let id { selection = id; Task { await refresh() } }
         }
     }
+
+    private func refreshCalendar() { env.calendar.refresh(calendars: env.settings.settings.calendarIDs) }
 
     private var activeSessionID: UUID? {
         switch env.recorder.phase {
