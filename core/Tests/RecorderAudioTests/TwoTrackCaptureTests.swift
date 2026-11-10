@@ -38,6 +38,49 @@ private func backendPlan(_ folder: SessionFolder) -> CapturePlan {
           remote: .allSystemAudio, willWriteFirstSample: { _, _ in })
 }
 
+private actor TailBufferedSource: AudioSource {
+    let firstHost: Double
+    var continuation: AsyncThrowingStream<AudioChunk, any Error>.Continuation?
+    var stopped = false
+    init(firstHost: Double) { self.firstHost = firstHost }
+    func start() async throws -> AsyncThrowingStream<AudioChunk, any Error> {
+        let pair = AsyncThrowingStream<AudioChunk, any Error>.makeStream()
+        continuation = pair.continuation
+        for index in 0..<280 { deliver(index) }
+        return pair.stream
+    }
+    private func deliver(_ index: Int) {
+        continuation?.yield(.init(hostSeconds: firstHost + Double(index) / 10, sampleRate: 48_000,
+            samples: [Float](repeating: Float(index + 1) / 1024, count: 4800)))
+    }
+    func stop() async {
+        guard !stopped else { return }
+        stopped = true
+        for index in 280..<300 { deliver(index) }
+        continuation?.finish()
+    }
+}
+
+@Test func twoTrackStopDrainsThirtySecondsIncludingTwentyTailBuffersBeforeAAC() async throws {
+    let folder = try backendFolder(); defer { try? FileManager.default.removeItem(at: folder.url) }
+    let mic = TailBufferedSource(firstHost: 100), remote = TailBufferedSource(firstHost: 100.1)
+    let running = try await TwoTrackCapture().start(backendPlan(folder), mic: mic, remote: remote)
+    let diagnostics = await running.stop()
+    for track in Track.allCases {
+        let file = try AVAudioFile(forReading: folder.spool(track))
+        #expect(file.length == 1_440_000)
+        file.framePosition = file.length - 4800
+        let last = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4800))
+        try file.read(into: last)
+        #expect(abs(last.floatChannelData![0][0] - Float(300) / 1024) < 0.0001)
+        #expect(diagnostics[track]?.gapCount == 0)
+        #expect(diagnostics[track]?.overlapDroppedFrames == 0)
+    }
+    let result = try await AACFinalizer().finalize(folder, clockTolerance: 0.1)
+    #expect(result.tracks.me?.frames == 1_440_000)
+    #expect(result.tracks.remote?.frames == 1_440_000)
+}
+
 @Test func remoteCandidatesPutZoomChromeTeamsWebexFaceTimeFirstAndSystemLast() {
     let expected = ["us.zoom.xos", "com.google.Chrome", "com.microsoft.teams2", "com.cisco.webexmeetingsapp", "com.apple.FaceTime", "other.a", "other.b"]
     let names = ["Zoom", "Chrome", "Teams", "Webex", "FaceTime", "Alpha", "Beta"]
