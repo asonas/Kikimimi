@@ -47,6 +47,8 @@ public struct SessionFolder: Sendable, Hashable {
     public var segments: URL { url.appendingPathComponent("segments.json") }
     public var transcript: URL { url.appendingPathComponent("transcript.md") }
     public var transcriptBackup: URL { url.appendingPathComponent("transcript.prev.md") }
+    public var summary: URL { url.appendingPathComponent("summary.md") }
+    public var summaryBackup: URL { url.appendingPathComponent("summary.prev.md") }
     /// Advisory flock held by the capturing process for the whole capture (see CaptureLease). Liveness is a kernel fact.
     public var lock: URL { url.appendingPathComponent("capture.lock") }
 

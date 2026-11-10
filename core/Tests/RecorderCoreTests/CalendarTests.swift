@@ -48,14 +48,18 @@ private func calendarEvent(_ id: String, title: String = "面接", start: Double
     #expect(UpcomingEvents.select(rows, now: now, calendars: []).isEmpty)
 }
 
-@Test func oldSettingsWithoutCalendarIDsDecodeAndSelectionRoundTrips() throws {
+@Test func oldSettingsDecodeWithCalendarAndSummaryDefaultsAndRoundTrip() throws {
     let old = Data(#"{"language":"en","modelVariant":"test-model","screenCaptureRequested":true,"mic":{"deviceUID":"mic","deviceName":"Microphone","channel":1}}"#.utf8)
     var settings = try JSONDecoder().decode(Settings.self, from: old)
     #expect(settings.calendarIDs == nil)
+    #expect(settings.summaryModel == "gpt-6.1-sol")
+    #expect(!settings.summaryConsent)
     #expect(settings.language == "en")
     #expect(settings.modelVariant == "test-model")
     #expect(settings.screenCaptureRequested)
     #expect(settings.mic?.deviceUID == "mic")
+    settings.summaryModel = "custom-model"
+    settings.summaryConsent = true
     for ids: Set<String>? in [nil, [], ["work", "personal"]] {
         settings.calendarIDs = ids
         #expect(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings)) == settings)

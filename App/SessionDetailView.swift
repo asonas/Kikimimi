@@ -31,6 +31,8 @@ struct SessionDetailView: View {
                 jobProgress
                 if let copyMessage { Text(copyMessage).font(.caption).foregroundStyle(.secondary) }
                 Divider()
+                SessionSummaryView(env: env, ref: session.ref, transcriptAvailable: markdownAvailable)
+                Divider()
                 Text("書き起こし").font(.title2.bold())
                 transcriptContent
             }

@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "RecorderCore", targets: ["RecorderCore"]),
         .library(name: "RecorderAudio", targets: ["RecorderAudio"]),
         .library(name: "RecorderWhisper", targets: ["RecorderWhisper"]),
+        .library(name: "RecorderSummary", targets: ["RecorderSummary"]),
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "1.1.1"),
@@ -19,6 +20,7 @@ let package = Package(
         // Pure domain + storage + orchestration + ports. Foundation and Observation only.
         // An architecture test fails if its sources import AVFoundation, CoreAudio, ScreenCaptureKit, AppKit, SwiftUI or WhisperKit.
         .target(name: "RecorderCore"),
+        .target(name: "RecorderSummary", dependencies: ["RecorderCore"]),
         // Hardware adapters: ScreenCaptureKit, AVAudioEngine, CoreAudio, CAF spool, AAC encode, TCC probes.
         .target(name: "RecorderAudio", dependencies: ["RecorderCore"]),
         // The only importer of WhisperKit. A future SpeechAnalyzer engine becomes a sibling target, not a branch in this one.
@@ -27,6 +29,7 @@ let package = Package(
             .product(name: "WhisperKit", package: "WhisperKit"),
         ]),
         .testTarget(name: "RecorderCoreTests", dependencies: ["RecorderCore"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "RecorderSummaryTests", dependencies: ["RecorderSummary"]),
         .testTarget(name: "RecorderAudioTests", dependencies: ["RecorderAudio", "RecorderCore"]),
         .testTarget(name: "RecorderWhisperTests", dependencies: ["RecorderWhisper", "RecorderCore"],
                     exclude: ["generate-fixtures.sh"], resources: [.copy("Fixtures")]),

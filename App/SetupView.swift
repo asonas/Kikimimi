@@ -38,6 +38,7 @@ struct SetupView: View {
                     microphoneInput
                     modelRow
                     CalendarSettingsView(env: env) { openPrivacy("Calendars") }
+                    SummarySettingsView(env: env)
                 }
             }
             .padding(24)

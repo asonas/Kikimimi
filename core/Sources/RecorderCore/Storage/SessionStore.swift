@@ -307,6 +307,16 @@ public actor SessionStore {
         return try meta(of: ref)
     }
 
+    /// Only complete summaries reach this method; preserve one previous result before atomic replacement.
+    public func saveSummary(_ ref: SessionRef, markdown: String) throws {
+        _ = try writableMeta(ref)
+        let previous = FileManager.default.fileExists(atPath: ref.folder.summary.path)
+            ? try Data(contentsOf: ref.folder.summary) : nil
+        try Task.checkCancellation()
+        if let previous { try atomicWrite(previous, ref.folder.summaryBackup) }
+        try atomicWrite(Data(markdown.utf8), ref.folder.summary)
+    }
+
     private func refuseNewerSegments(_ ref: SessionRef) throws {
         struct Header: Decodable { let schemaVersion: Int }
         guard FileManager.default.fileExists(atPath: ref.folder.segments.path) else { return }

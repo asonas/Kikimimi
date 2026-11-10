@@ -16,7 +16,26 @@ public struct Settings: Sendable, Equatable, Codable {
     public var recordingsRoot: URL?
     /// nil selects every calendar, including calendars added later.
     public var calendarIDs: Set<String>?
+    public var summaryModel = "gpt-6.1-sol"
+    public var summaryConsent = false
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mic = try c.decodeIfPresent(MicPreference.self, forKey: .mic)
+        remote = try c.decodeIfPresent(RemoteSource.self, forKey: .remote)
+        language = try c.decode(String.self, forKey: .language)
+        modelVariant = try c.decode(String.self, forKey: .modelVariant)
+        screenCaptureRequested = try c.decode(Bool.self, forKey: .screenCaptureRequested)
+        recordingsRoot = try c.decodeIfPresent(URL.self, forKey: .recordingsRoot)
+        calendarIDs = try c.decodeIfPresent(Set<String>.self, forKey: .calendarIDs)
+        summaryModel = try c.decodeIfPresent(String.self, forKey: .summaryModel) ?? "gpt-6.1-sol"
+        summaryConsent = try c.decodeIfPresent(Bool.self, forKey: .summaryConsent) ?? false
+    }
 }
 
 public enum ModelSpec {

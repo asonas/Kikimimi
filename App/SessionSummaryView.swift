@@ -1,0 +1,75 @@
+import SwiftUI
+import RecorderCore
+import RecorderSummary
+
+struct SessionSummaryView: View {
+    let env: AppEnvironment
+    let ref: SessionRef
+    let transcriptAvailable: Bool
+    @State private var summary: String?
+    @State private var error: String?
+    @State private var operation: Task<Void, Never>?
+    @State private var confirming = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("要約").font(.title2.bold())
+            if operation != nil {
+                HStack {
+                    ProgressView("要約を作成しています")
+                    Button("キャンセル") { operation?.cancel() }
+                }
+            } else {
+                Button(summary == nil ? "要約を作成" : "要約を作り直す") {
+                    if env.settings.settings.summaryConsent { start() }
+                    else { confirming = true }
+                }
+                .disabled(!transcriptAvailable || !env.summaryCredentials.hasKey ||
+                          env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if !env.summaryCredentials.hasKey {
+                    Text("要約には設定でOpenAI APIキーを保存してください").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if let summary {
+                Text((try? AttributedString(markdown: summary)) ?? AttributedString(summary))
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .confirmationDialog("書き起こしをOpenAIに送信しますか？", isPresented: $confirming, titleVisibility: .visible) {
+            Button("送信して要約を作成") { env.settings.settings.summaryConsent = true; start() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("要約を作成するため、この面接の書き起こしテキストをOpenAIへ送信します。音声は送信しません。次回からは要約ボタンで送信します")
+        }
+        .task(id: ref) {
+            env.summaryCredentials.refresh()
+            loadSummary()
+        }
+        .onDisappear { operation?.cancel() }
+    }
+
+    private func start() {
+        guard operation == nil else { return }
+        let model = env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        error = nil
+        operation = Task {
+            defer { operation = nil }
+            do {
+                let transcript = try String(contentsOf: ref.folder.transcript, encoding: .utf8)
+                let result = try await ResponsesClient().summarize(transcript: transcript, model: model,
+                                                                  tokenSource: env.summaryCredentials.source)
+                try Task.checkCancellation()
+                try await env.store.saveSummary(ref, markdown: result)
+                summary = result
+            } catch is CancellationError { }
+            catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func loadSummary() {
+        guard FileManager.default.fileExists(atPath: ref.folder.summary.path) else { summary = nil; return }
+        do { summary = try String(contentsOf: ref.folder.summary, encoding: .utf8) }
+        catch { self.error = "要約を読み込めませんでした: \(error.localizedDescription)" }
+    }
+}

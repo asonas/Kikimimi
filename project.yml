@@ -37,6 +37,8 @@ targets:
         product: RecorderAudio
       - package: RecorderKit
         product: RecorderWhisper
+      - package: RecorderKit
+        product: RecorderSummary
     settings:
       base:
         # One bundle ID for Debug and Release. ASO-109 renamed the identity; TCC needs a one-time re-grant.

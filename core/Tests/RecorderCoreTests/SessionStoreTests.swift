@@ -54,6 +54,23 @@ private func segments(version: Int = 1) -> SegmentsFile {
                  tracks: .init(remote: .transcribed), segments: [])
 }
 
+@Test func sessionStoreSavesCompleteSummaryAndKeepsOnePreviousVersion() async throws {
+    let root = try temporaryRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let store = store(root)
+    let (ref, lease) = try await create(store)
+    await #expect(throws: CocoaError.self) { try await store.saveSummary(ref, markdown: "locked") }
+    lease.release()
+    let metaBefore = try Data(contentsOf: ref.folder.meta)
+    try await store.saveSummary(ref, markdown: "first")
+    #expect(!FileManager.default.fileExists(atPath: ref.folder.summaryBackup.path))
+    try await store.saveSummary(ref, markdown: "second")
+    #expect(try String(contentsOf: ref.folder.summaryBackup, encoding: .utf8) == "first")
+    try await store.saveSummary(ref, markdown: "third")
+    #expect(try String(contentsOf: ref.folder.summaryBackup, encoding: .utf8) == "second")
+    #expect(try String(contentsOf: ref.folder.summary, encoding: .utf8) == "third")
+    #expect(try Data(contentsOf: ref.folder.meta) == metaBefore)
+}
+
 @Test func folderNamerSanitizesAndPreservesGraphemeClusters() {
     let family = "👨‍👩‍👧‍👦"
     let rows: [(String, String)] = [
