@@ -3,7 +3,7 @@ import SwiftUI
 import RecorderCore
 
 @main
-struct InterviewRecorderApp: App {
+struct KikimimiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var env: AppEnvironment
 
@@ -17,7 +17,7 @@ struct InterviewRecorderApp: App {
         // Keep the menu scene first: windows open explicitly, including on macOS 14 without defaultLaunchBehavior.
         MenuBarExtra { MenuView(env: env) } label: { LaunchIcon(env: env) }
             .menuBarExtraStyle(.window)
-        Window("InterviewRecorder", id: "main") { MainWindowView(env: env) }
+        Window("Kikimimi", id: "main") { MainWindowView(env: env) }
             .defaultSize(width: 1080, height: 760)
         Settings { SetupView(env: env) }
         Window("新しい録音", id: "new-recording") { NewRecordingView(env: env) }
@@ -39,7 +39,7 @@ private struct LaunchIcon: View {
                     Circle().fill(.orange).frame(width: 6, height: 6).offset(x: 3, y: -2)
                 }
             }
-            .accessibilityLabel("InterviewRecorder: \(status.description)")
+            .accessibilityLabel("Kikimimi: \(status.description)")
             .help(status.description)
             .task {
                 guard !AppDelegate.isHeadless else { return }

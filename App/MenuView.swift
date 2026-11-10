@@ -8,7 +8,7 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("InterviewRecorder").font(.headline)
+            Text("Kikimimi").font(.headline)
             switch env.recorder.phase {
             case .idle:
                 Button("新しい録音") { show("new-recording") }

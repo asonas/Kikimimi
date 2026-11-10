@@ -10,7 +10,7 @@ mise run build
 mise run app
 ```
 
-`build` は Debug アプリを生成し、署名と designated requirement を検証する。Bundle ID は `as.ason.InterviewRecorder`。再ビルド後も画面収録・マイクの許可が保持されることを Setup で確認する。
+`build` は Debug アプリを生成し、署名と designated requirement を検証する。Bundle ID は `as.ason.Kikimimi`。再ビルド後も画面収録・マイクの許可が保持されることを Setup で確認する。
 
 通常起動ではメインウィンドウが開く。設定は Command+, で開く。録音の準備が不足していればメイン上部の「設定を開く」を使い、初回は設定が自動で開く。設定（Setup）の操作、許可ダイアログ、デバイス選択、実録音は人間が行う。headless コマンドはウィンドウを開かず、許可を要求しない。録音可能でなければ `HEADLESS FAILED: notReady(...)` で終了する。画面収録を許可し直した後に再起動が必要と表示された場合は、設定の再起動ボタンを使う。
 
@@ -33,7 +33,7 @@ Zoom の確認では `--target us.zoom.xos`、全システム音では `--target
 出力フォルダを `session_dir` に設定する。以下の名前は実際に出力されたものへ置き換える。
 
 ```sh
-session_dir="$HOME/Library/Application Support/InterviewRecorder/Recordings/2026-11-10_1043_smoke2"
+session_dir="$HOME/Library/Application Support/Kikimimi/Recordings/2026-11-10_1043_smoke2"
 afinfo "$session_dir/audio-self.m4a"
 afinfo "$session_dir/audio-remote.m4a"
 jq '{startedAt,endedAt,endReason,tracks}' "$session_dir/meta.json"
@@ -97,7 +97,7 @@ mise run app --headless transcribe 85F87F2C-0396-475A-8B1F-548C75F94E01
 | `2026-11-10_1049_killtest`（強制終了後の復元） | self | 2,299,200 | 47.900 | -22.353 |
 | 同上 | remote | 2,293,440 | 47.780 | -1.722 |
 
-録音フォルダは `~/Library/Application Support/InterviewRecorder/Recordings/` 以下。証拠は各 `meta.json` と以下のローカルログにある。
+録音フォルダは `~/Library/Application Support/Kikimimi/Recordings/` 以下。証拠は各 `meta.json` と以下のローカルログにある。
 
 - 30秒: `build/logs/20261110-104009-959.stderr.log`。self は remote より約0.1秒早く始まったが約2秒短かった。両トラックの gapCount/overlapDroppedFrames は0、failureなし。この差は1回だけ発生し、原因は未確定。
 - 60秒: `build/logs/20261110-104351-3028.stderr.log`。両トラックの長さはほぼ一致し、gapCount/overlapDroppedFrames は0。2秒の差は再現しなかった。fake で末尾20×4800フレームを stop 時に追加するテストも、CAF・AACとも全300バッファを保持した。

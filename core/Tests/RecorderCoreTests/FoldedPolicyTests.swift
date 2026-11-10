@@ -70,7 +70,7 @@ private let zeros100ms = [Float](repeating: 0, count: 4_800)    // 48 kHz
 // MARK: - LaunchMode / HeadlessCommand
 
 @Test func launchModeIgnoresSystemArgumentsAndDetectsRelaunch() throws {
-    #expect(try LaunchMode.parse(["/Applications/InterviewRecorder.app/Contents/MacOS/InterviewRecorder"]) == .normal)
+    #expect(try LaunchMode.parse(["/Applications/Kikimimi.app/Contents/MacOS/Kikimimi"]) == .normal)
     #expect(try LaunchMode.parse(["bin", "-NSDocumentRevisionsDebugMode", "YES"]) == .normal)
     #expect(try LaunchMode.parse(["bin", "--relaunch"]) == .relaunched)
     #expect(LaunchMode.relaunched.skipsSingleInstanceCheck)

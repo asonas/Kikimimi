@@ -14,7 +14,7 @@ import RecorderCore
 import WhisperKit
 
 public enum LiveWhisper {
-    /// One object, two ports: Transcriber (run) and ModelProvider (install/status). `base` = .../InterviewRecorder/Models.
+    /// One object, two ports: Transcriber (run) and ModelProvider (install/status). `base` = .../Kikimimi/Models.
     public static func engine(base: URL, variant: String) -> WhisperKitEngine { WhisperKitEngine(base: base, variant: variant) }
 }
 

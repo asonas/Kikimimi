@@ -10,13 +10,13 @@ xcodegen = "latest"
 [env]
 # The active developer dir on this machine is CommandLineTools; swift test (Swift Testing) and xcodebuild need Xcode.
 DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer"
-SCHEME = "InterviewRecorder"
-APP_NAME = "InterviewRecorder"
-PROJECT = "InterviewRecorder.xcodeproj"
+SCHEME = "Kikimimi"
+APP_NAME = "Kikimimi"
+PROJECT = "Kikimimi.xcodeproj"
 TEAM_ID = "QYP65434UW"
 BUILD_DIR = "build"
 # One stable path for the Debug product, so Launch Services and TCC see one app for the bundle ID.
-APP_PATH = "build/development/Build/Products/Debug/InterviewRecorder.app"
+APP_PATH = "build/development/Build/Products/Debug/Kikimimi.app"
 
 [tasks.generate]
 description = "Generate the Xcode project from project.yml"

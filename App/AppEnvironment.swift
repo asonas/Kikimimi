@@ -31,10 +31,22 @@ final class AppEnvironment {
     }
 
     static func live() -> AppEnvironment {
+        let parent = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let support = parent.appendingPathComponent("Kikimimi", isDirectory: true)
+        let logger = Logger(subsystem: "as.ason.Kikimimi", category: "migration")
+        do {
+            let outcome = try LegacyInstallMigration.moveFolder(
+                old: parent.appendingPathComponent(LegacyInstallMigration.folderName), new: support)
+            logger.info("Legacy folder migration: \(outcome.rawValue, privacy: .public)")
+        } catch {
+            logger.error("Legacy folder migration failed: \(error)")
+        }
+        if let oldDefaults = UserDefaults(suiteName: LegacyInstallMigration.defaultsDomain) {
+            let copied = LegacyInstallMigration.copySettings(old: oldDefaults, new: .standard)
+            logger.info("Legacy settings copied: \(copied)")
+        }
         _ = AppDelegate.launchMode
         let settings = SettingsStore()
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("InterviewRecorder", isDirectory: true)
         let store = SessionStore(root: settings.settings.recordingsRoot ?? support.appendingPathComponent("Recordings"))
         let finalizer = SessionFinalizer(store: store, audio: LiveAudio.finalizer())
         #if DEBUG
@@ -62,7 +74,7 @@ final class AppEnvironment {
             finalizer: finalizer, app: app), readiness: { readiness.readiness }, mic: { settings.settings.mic }, hooks: hooks)
         let launched = Task {
             do { _ = try await LaunchRecovery.run(store: store, finalizer: finalizer) }
-            catch { Logger(subsystem: "as.ason.InterviewRecorder", category: "launch").error("Launch recovery could not list sessions") }
+            catch { Logger(subsystem: "as.ason.Kikimimi", category: "launch").error("Launch recovery could not list sessions") }
             await readiness.refresh()
         }
         return AppEnvironment(settings: settings, store: store, readiness: readiness,
@@ -79,7 +91,7 @@ final class AppEnvironment {
     }
     // live() pseudocode:
     //   settings   = SettingsStore()
-    //   root       = settings.recordingsRoot ?? ~/Library/Application Support/InterviewRecorder/Recordings
+    //   root       = settings.recordingsRoot ?? ~/Library/Application Support/Kikimimi/Recordings
     //   store      = SessionStore(root:)
     //   finalizer  = SessionFinalizer(store: store, audio: LiveAudio.finalizer())
     //   whisper    = LiveWhisper.engine(base: .../Models, variant: settings.modelVariant)     // one object, both ports
@@ -104,7 +116,7 @@ final class AppEnvironment {
             guard process.terminationStatus == 0 else { return }
             NSApp.terminate(nil)
         } catch {
-            Logger(subsystem: "as.ason.InterviewRecorder", category: "launch").error("Relaunch failed: \(error)")
+            Logger(subsystem: "as.ason.Kikimimi", category: "launch").error("Relaunch failed: \(error)")
         }
     }
 }

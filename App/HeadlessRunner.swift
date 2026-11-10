@@ -3,7 +3,7 @@
 // end to end without clicking the menu bar. Parsing is pure and tested in Core (LaunchMode / HeadlessCommand).
 //
 // Always launched through LaunchServices:  mise run app --headless ...   (= open -n -W --stdout .. --stderr .. <app> --args --headless ...)
-// Never run build/.../InterviewRecorder.app/Contents/MacOS/InterviewRecorder directly: the terminal (Herdr, Ghostty) has its
+// Never run build/.../Kikimimi.app/Contents/MacOS/Kikimimi directly: the terminal (Herdr, Ghostty) has its
 // own Screen Recording grant, so a directly started binary would pass or fail on the terminal's TCC state, not the app's.
 #if DEBUG
 import AppKit

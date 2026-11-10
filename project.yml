@@ -1,8 +1,8 @@
-# <repo>/project.yml  (XcodeGen; InterviewRecorder.xcodeproj is generated and gitignored, like yohaku)
+# <repo>/project.yml  (XcodeGen; Kikimimi.xcodeproj is generated and gitignored, like yohaku)
 # Validated with xcodegen 2.46.0 during design (project generated, WhisperKit 1.1.1 resolved through the local package).
 # Conventions copied from yohaku / YoruMimizuku: team QYP65434UW, Automatic signing, local package by path,
 # `info:` + `entitlements:` generated from here.
-name: InterviewRecorder
+name: Kikimimi
 options:
   developmentLanguage: ja
   bundleIdPrefix: as.ason
@@ -26,7 +26,7 @@ settings:
     # so nothing in this target is main-actor by accident.
     ENABLE_HARDENED_RUNTIME: YES
 targets:
-  InterviewRecorder:
+  Kikimimi:
     type: application
     platform: macOS
     sources: [App]
@@ -39,18 +39,16 @@ targets:
         product: RecorderWhisper
     settings:
       base:
-        # ONE bundle ID for Debug and Release (unlike yohaku's .dev split): TCC grants are per bundle ID + signature,
-        # the Phase 0 grants already exist for as.ason.InterviewRecorder, and a second identity would mean a second
-        # row in System Settings and a re-grant.
-        PRODUCT_BUNDLE_IDENTIFIER: as.ason.InterviewRecorder
-        PRODUCT_NAME: InterviewRecorder
+        # One bundle ID for Debug and Release. ASO-109 renamed the identity; TCC needs a one-time re-grant.
+        PRODUCT_BUNDLE_IDENTIFIER: as.ason.Kikimimi
+        PRODUCT_NAME: Kikimimi
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         ENABLE_APP_SANDBOX: NO
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: InterviewRecorder
+        CFBundleDisplayName: Kikimimi
         CFBundleDevelopmentRegion: ja
         CFBundleLocalizations: [ja]
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
@@ -62,14 +60,14 @@ targets:
         # per-session flock lease, not from instance counting.
         NSMicrophoneUsageDescription: 面接の音声を、相手側の音声とは別トラックで録音するためにマイクを使用します。
     entitlements:
-      path: App/InterviewRecorder.entitlements
+      path: App/Kikimimi.entitlements
       properties:
         com.apple.security.device.audio-input: true
 schemes:
-  InterviewRecorder:
+  Kikimimi:
     build:
       targets:
-        InterviewRecorder: all
+        Kikimimi: all
     run:
       config: Debug
     archive:

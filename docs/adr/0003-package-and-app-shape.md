@@ -16,7 +16,7 @@ Phase 0 の手組みアプリバンドルは実験に使えたが、継続開発
 - `RecorderAudio`: AVFoundation・CoreAudio・ScreenCaptureKitなど音声ハードウェアのアダプタ。
 - `RecorderWhisper`: WhisperKitをimportする唯一のターゲット。モデルのロード・Track処理順・アンロードを隠す。
 
-テストは `core/` の `swift test`、タスクは `mise.toml` の `generate / test / build / app` に集約する。全構成のBundle IDは `as.ason.InterviewRecorder` に統一し、アプリの起動はLaunchServicesの `open -n` を通す。Phase 0 のTCC許可の引き継ぎはアプリ移行時に実機確認する。
+テストは `core/` の `swift test`、タスクは `mise.toml` の `generate / test / build / app` に集約する。全構成のBundle IDは `as.ason.Kikimimi` に統一し、アプリの起動はLaunchServicesの `open -n` を通す。2026-11-10 に ASO-109 で InterviewRecorder から Kikimimi に改名し、初回起動時にデータを移動する。Bundle ID の変更に伴い TCC 許可の再付与が必要になる。
 
 ## Consequences
 

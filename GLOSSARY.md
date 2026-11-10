@@ -1,4 +1,4 @@
-# InterviewRecorder
+# Kikimimi
 
 面接の音声収録と、端末内での書き起こしに使う用語。[Phase 1 設計](docs/design/phase1/design.md)に準拠する。
 

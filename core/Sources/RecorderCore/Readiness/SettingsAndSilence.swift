@@ -12,7 +12,7 @@ public struct Settings: Sendable, Equatable, Codable {
     public var modelVariant = ModelSpec.defaultVariant
     /// Our own flag: CGPreflightScreenCaptureAccess cannot tell "never asked" from "denied".
     public var screenCaptureRequested = false
-    /// nil = ~/Library/Application Support/InterviewRecorder/Recordings (no UI in Phase 1; plumbing only).
+    /// nil = ~/Library/Application Support/Kikimimi/Recordings (no UI in Phase 1; plumbing only).
     public var recordingsRoot: URL?
     public init() {}
 }
@@ -31,16 +31,17 @@ public enum ModelSpec {
 
 @MainActor @Observable
 public final class SettingsStore {
+    public nonisolated static let key = "settings.v1"
     private let defaults: UserDefaults
     public var settings: Settings {
         didSet {
             guard settings != oldValue, let data = try? JSONEncoder().encode(settings) else { return }
-            defaults.set(data, forKey: "settings.v1")
+            defaults.set(data, forKey: Self.key)
         }
     }
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        settings = defaults.data(forKey: "settings.v1")
+        settings = defaults.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
     }
 }

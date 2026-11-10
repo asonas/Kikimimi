@@ -17,7 +17,7 @@ import Testing
 struct WhisperKitIntegrationTests {
     private func installedEngine() async throws -> WhisperKitEngine {
         let base = ProcessInfo.processInfo.environment["IR_MODEL_BASE"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/InterviewRecorder/Models")
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Kikimimi/Models")
         let engine = LiveWhisper.engine(base: base, variant: "openai_whisper-tiny")
         guard await engine.status() == .ready else { throw TranscriberError.modelNotInstalled }
         return engine
