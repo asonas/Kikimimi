@@ -23,8 +23,6 @@ struct KikimimiApp: App {
             .windowToolbarStyle(.unified)
         Settings { SetupView(env: env) }
             .defaultSize(width: 1040, height: 720)
-        Window("新しい録音", id: "new-recording") { NewRecordingView(env: env) }
-            .windowResizability(.contentSize)
     }
 }
 

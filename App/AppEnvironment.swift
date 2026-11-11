@@ -20,6 +20,7 @@ final class AppEnvironment {
     let modelVariantOverridden: Bool
     let termination = TerminationCoordinator()
     let calendar = CalendarModel(source: LiveCalendar())
+    let navigation = MainNavigation()
     let summaryCredentials = SummaryCredentials()
     let chatGPT = ChatGPTSignIn()
     let summaryModels = SummaryModelLists()

@@ -52,7 +52,7 @@ enum SessionTrackPresentation {
     }
 }
 
-private extension TrackSource {
+extension TrackSource {
     var displayName: String {
         switch self {
         case .mic(_, let name, let channel, _): name + (channel.map { " · INPUT \($0)" } ?? " · 全チャンネル")

@@ -36,17 +36,7 @@ struct RecordingPane: View {
             }
             microphoneInput
             VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("マイクの入力").font(KikimimiFont.label.font)
-                        Spacer()
-                        Text(String(format: "%.0f dBFS", peak)).font(KikimimiFont.number.font)
-                    }
-                    ProgressView(value: Double(min(1, max(0, (peak + 75) / 75))))
-                        .tint(KikimimiColor.meterGreen).accessibilityLabel("マイク入力レベル")
-                }
-                .padding(24).foregroundStyle(.white)
-                .background(KikimimiColor.meterPanel, in: RoundedRectangle(cornerRadius: 8))
+                LevelMeter(channel: "マイクの入力", dbFS: peak)
                 Text("声を出して確認できます。録音中はここでの入力確認を停止します。")
                     .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }

@@ -2,21 +2,21 @@ import AppKit
 import SwiftUI
 import RecorderCore
 
-enum MainRoute: Hashable { case session(SessionRef) }
-
 struct MainWindowView: View {
     let env: AppEnvironment
     @Environment(\.openSettings) private var openSettings
     @State private var sessions: [SessionListing] = []
-    @State private var path: [MainRoute] = []
     @State private var listError: String?
-    @State private var recordingRequest: RecordingRequest?
 
     var body: some View {
-        NavigationStack(path: $path) {
+        @Bindable var navigation = env.navigation
+        NavigationStack(path: $navigation.path) {
             recordingList
                 .navigationDestination(for: MainRoute.self) { route in
                     switch route {
+                    case .prepare(let event):
+                        PrepareRecordingView(env: env, event: event)
+                            .navigationBarBackButtonHidden()
                     case .session(let ref):
                         if let session = sessions.first(where: { $0.ref == ref }) {
                             SessionDetailView(env: env, session: session).id(ref)
@@ -34,14 +34,14 @@ struct MainWindowView: View {
         .tint(KikimimiColor.ink)
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                if path.isEmpty {
+                if env.navigation.path.isEmpty {
                     HStack(spacing: 12) {
                         Image("Ear").renderingMode(.template).resizable().frame(width: 32, height: 32)
                             .accessibilityHidden(true)
                         Text("Kikimimi").kikimimiText(.heading)
                     }
                 } else {
-                    Button { path.removeAll() } label: { Label("録音一覧", systemImage: "chevron.left") }
+                    Button { env.navigation.showList() } label: { Label("録音一覧", systemImage: "chevron.left") }
                         .buttonStyle(KikimimiButtonStyle.text)
                 }
             }
@@ -52,7 +52,6 @@ struct MainWindowView: View {
         }
         .toolbarBackground(KikimimiColor.paper, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
-        .sheet(item: $recordingRequest) { NewRecordingView(env: env, event: $0.event) }
         .task { refreshCalendar() }
         .onChange(of: env.settings.settings.calendarIDs) { _, _ in refreshCalendar() }
         .onReceive(NotificationCenter.default.publisher(for: LiveCalendar.changedNotification).receive(on: RunLoop.main)) { _ in refreshCalendar() }
@@ -66,7 +65,7 @@ struct MainWindowView: View {
         }
         .onChange(of: activeSessionRef, initial: true) { _, ref in
             guard let ref else { return }
-            Task { await refresh(); path = [.session(ref)] }
+            Task { await refresh(); env.navigation.showSession(ref) }
         }
     }
 
@@ -78,7 +77,7 @@ struct MainWindowView: View {
                     Text("会話の記録を、ここから。").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
                 }
                 Spacer()
-                Button("新しい録音") { recordingRequest = RecordingRequest(event: nil) }
+                Button("新しい録音") { env.navigation.prepare() }
                     .buttonStyle(KikimimiButtonStyle.primary).disabled(recordingUnavailable)
             }
             if !env.readiness.readiness.canRecord {
@@ -100,7 +99,7 @@ struct MainWindowView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(sessions) { session in
                         RecordingListRow(session: session, job: job(for: session), localCapture: env.localCapture(for: session.ref)) {
-                            path.append(.session(session.ref))
+                            env.navigation.showSession(session.ref)
                         }
                         MainDivider()
                     }
@@ -134,7 +133,7 @@ struct MainWindowView: View {
                             .kikimimiText(.number).foregroundStyle(KikimimiColor.secondary)
                             .frame(width: 190, alignment: .leading)
                         Text(event.title).kikimimiText(.label).frame(maxWidth: .infinity, alignment: .leading)
-                        Button("録音を準備") { recordingRequest = RecordingRequest(event: event) }
+                        Button("録音を準備") { env.navigation.prepare(event: event) }
                             .buttonStyle(KikimimiButtonStyle.secondary).disabled(recordingUnavailable)
                     }
                     if event.id != env.calendar.events.last?.id { MainDivider() }
@@ -165,9 +164,4 @@ struct MainWindowView: View {
             sessions = value; listError = nil
         } catch { if !Task.isCancelled { listError = "録音一覧を取得できませんでした: \(error.localizedDescription)" } }
     }
-}
-
-private struct RecordingRequest: Identifiable {
-    let id = UUID()
-    let event: CalendarEvent?
 }

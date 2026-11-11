@@ -11,7 +11,10 @@ struct MenuView: View {
             Text("Kikimimi").font(.headline)
             switch env.recorder.phase {
             case .idle:
-                Button("新しい録音") { show("new-recording") }
+                Button("新しい録音") {
+                    env.navigation.prepare()
+                    AppDelegate.showMainWindow?()
+                }
                     .disabled(env.termination.requested)
                 Button("ウィンドウを開く") { show("main") }
             case .preparing: Text("録音を準備しています")

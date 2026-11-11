@@ -35,7 +35,9 @@ struct SessionDetailView: View {
                 exportStatus
             } else {
                 SessionActivityView(env: env, session: session, state: state, job: job)
-                Button("録音の情報") { showingInfo = true }.buttonStyle(KikimimiButtonStyle.text)
+                if page == .needsAttention {
+                    Button("録音の情報") { showingInfo = true }.buttonStyle(KikimimiButtonStyle.text)
+                }
             }
             if let actionError { Text(actionError).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
         }
@@ -65,7 +67,11 @@ struct SessionDetailView: View {
     private var page: SessionPage { .resolve(state: session.state, job: job, localCapture: env.localCapture(for: session.ref)) }
     private var job: TranscriptionJobState? { env.transcription.jobs.first { $0.id == session.id }?.state }
     private var subtitle: String {
-        [session.title, SessionDate.detail(session.startedAt, timeZone: state.meta.flatMap { TimeZone(identifier: $0.timeZone) }),
+        if page == .recording {
+            return [session.title, SessionDate.formatted(session.startedAt, "yyyy年M月d日", timeZone: state.meta.flatMap { TimeZone(identifier: $0.timeZone) })]
+                .compactMap { $0 }.joined(separator: "  /  ")
+        }
+        return [session.title, SessionDate.detail(session.startedAt, timeZone: state.meta.flatMap { TimeZone(identifier: $0.timeZone) }),
          session.durationSeconds.map(SessionDate.duration)].compactMap { $0 }.joined(separator: "  /  ")
     }
     private var documentActions: some View {

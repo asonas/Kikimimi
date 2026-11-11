@@ -39,28 +39,6 @@ enum SessionDate {
     }
 }
 
-struct TrackMeter: View {
-    let label: String
-    let peak: Float?
-    let health: TrackHealth
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(label)
-                Spacer()
-                Text(health.label).foregroundStyle(health.isProblem ? KikimimiColor.warning : KikimimiColor.secondary)
-            }
-            .font(KikimimiFont.small.font)
-            HStack {
-                ProgressView(value: Double(min(1, max(0, ((peak ?? -120) + 75) / 75))))
-                    .tint(health.isProblem ? KikimimiColor.warning : KikimimiColor.success)
-                    .accessibilityLabel("\(label)の録音レベル")
-                Text(String(format: "%.0f dBFS", peak ?? -120)).font(KikimimiFont.number.font).frame(width: 72)
-            }
-        }
-    }
-}
-
 extension AppStatus {
     var description: String {
         switch self {
