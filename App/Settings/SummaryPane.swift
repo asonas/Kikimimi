@@ -13,7 +13,7 @@ struct SummaryPane: View {
                     selection: Binding(
                         get: { env.settings.settings.summaryProvider },
                         set: {
-                            env.settings.settings.summaryProvider = $0
+                            env.setSummaryProvider($0)
                             key = ""
                             if $0 == .apiKey { env.chatGPT.cancel() }
                         })

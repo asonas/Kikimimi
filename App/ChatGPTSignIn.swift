@@ -39,10 +39,15 @@ struct ChatGPTKeychainStore: ChatGPTCredentialStore {
 @MainActor @Observable
 final class ChatGPTSignIn {
     let source = ChatGPTTokenSource(store: ChatGPTKeychainStore())
-    private(set) var signedIn = false
+    @ObservationIgnored var onUnavailable: () -> Void = {}
+    private(set) var signedIn = false {
+        didSet { if !signedIn { onUnavailable() } }
+    }
     private(set) var email: String?
     private(set) var error: String?
-    private(set) var signingOut = false
+    private(set) var signingOut = false {
+        didSet { if signingOut { onUnavailable() } }
+    }
     private(set) var revision = 0
     private var operation: Task<Void, Never>?
     var waiting: Bool { operation != nil }

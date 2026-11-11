@@ -6,22 +6,20 @@ struct SessionSummaryView: View {
     let env: AppEnvironment
     let ref: SessionRef
     let transcriptAvailable: Bool
-    var onCreated: () -> Void = {}
     @State private var summary: String?
     @State private var error: String?
-    @State private var operation: Task<Void, Never>?
     @State private var confirming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("要約").font(.title2.bold())
-            if summary == nil, operation == nil {
+            if summary == nil, !isRunning {
                 Text("書き起こしから面接の要点をまとめられます").foregroundStyle(.secondary)
             }
-            if operation != nil {
+            if isRunning {
                 HStack {
                     ProgressView("要約を作成しています")
-                    Button("キャンセル") { operation?.cancel() }
+                    Button("キャンセル") { env.summaryJobs.cancel(ref: ref) }
                 }
             } else {
                 Button(summary == nil ? "要約を作成" : "要約を作り直す") {
@@ -35,6 +33,7 @@ struct SessionSummaryView: View {
                 }
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if case .failed(let message) = job { Text(message).foregroundStyle(.red).textSelection(.enabled) }
             if let summary {
                 SummaryMarkdownView(markdown: summary)
             }
@@ -50,30 +49,18 @@ struct SessionSummaryView: View {
             await env.chatGPT.refresh()
             loadSummary()
         }
-        .onDisappear { operation?.cancel() }
-        .onChange(of: env.settings.settings.summaryProvider) { _, _ in operation?.cancel() }
-        .onChange(of: env.summaryProviderReady) { _, ready in if !ready { operation?.cancel() } }
+        .onChange(of: job) { _, job in
+            if case .finished = job { loadSummary() }
+            if case .running = job { error = nil }
+        }
     }
 
+    private var job: SummaryJob? { env.summaryJobs.jobs[ref] }
+    private var isRunning: Bool { job == .running }
+
     private func start() {
-        guard operation == nil else { return }
-        let model = env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = env.summaryTokenSource
         error = nil
-        operation = Task {
-            defer { operation = nil }
-            do {
-                let transcript = try String(contentsOf: ref.folder.transcript, encoding: .utf8)
-                let result = try await ResponsesClient().summarize(transcript: transcript, model: model,
-                                                                  tokenSource: source)
-                try Task.checkCancellation()
-                try await env.store.saveSummary(ref, markdown: result)
-                summary = result
-                onCreated()
-            } catch is CancellationError { }
-            catch { if !Task.isCancelled { self.error = error.localizedDescription } }
-            await env.chatGPT.refresh()
-        }
+        env.summaryJobs.start(ref: ref)
     }
 
     private func loadSummary() {

@@ -23,6 +23,13 @@ final class AppEnvironment {
     let summaryCredentials = SummaryCredentials()
     let chatGPT = ChatGPTSignIn()
     let summaryModels = SummaryModelLists()
+    @ObservationIgnored lazy var summaryJobs = SummaryJobs(environment: self)
+
+    func setSummaryProvider(_ provider: SummaryProvider) {
+        guard settings.settings.summaryProvider != provider else { return }
+        summaryJobs.cancelAll()
+        settings.settings.summaryProvider = provider
+    }
     var summaryProviderReady: Bool {
         switch settings.settings.summaryProvider {
         case .apiKey: summaryCredentials.hasKey
@@ -105,6 +112,14 @@ final class AppEnvironment {
         self.settings = settings; self.store = store; self.readiness = readiness
         self.recorder = recorder; self.transcription = transcription; self.launched = launched
         self.modelVariant = modelVariant; self.modelVariantOverridden = modelVariantOverridden
+        summaryCredentials.onUnavailable = { [weak self] in
+            guard let self, self.settings.settings.summaryProvider == .apiKey else { return }
+            self.summaryJobs.cancelAll()
+        }
+        chatGPT.onUnavailable = { [weak self] in
+            guard let self, self.settings.settings.summaryProvider == .chatGPT else { return }
+            self.summaryJobs.cancelAll()
+        }
     }
     // live() pseudocode:
     //   settings   = SettingsStore()

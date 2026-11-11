@@ -19,29 +19,25 @@ struct SessionDocumentView: View {
             .labelsHidden()
             .padding(16)
             Divider()
-            // Keep both documents mounted so switching tabs doesn't cancel an in-flight summary.
-            ZStack(alignment: .topLeading) {
+            switch state.tab {
+            case .summary:
                 ScrollView {
-                    SessionSummaryView(env: env, ref: state.ref, transcriptAvailable: state.markdownAvailable) {
-                        state.tab = .summary
-                    }
+                    SessionSummaryView(env: env, ref: state.ref, transcriptAvailable: state.markdownAvailable)
                     .padding(24)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .opacity(state.tab == .summary ? 1 : 0)
-                .allowsHitTesting(state.tab == .summary)
-                .accessibilityHidden(state.tab != .summary)
+            case .transcript:
                 ScrollView {
                     SessionTranscriptView(display: state.transcript)
                         .padding(24)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .opacity(state.tab == .transcript ? 1 : 0)
-                .allowsHitTesting(state.tab == .transcript)
-                .accessibilityHidden(state.tab != .transcript)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: env.summaryJobs.jobs[state.ref]) { _, job in
+            if case .finished = job { state.tab = .summary }
+        }
     }
 }
 

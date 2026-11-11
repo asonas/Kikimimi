@@ -61,7 +61,10 @@ struct SummaryAPIKey: BearerTokenSource {
 @MainActor @Observable
 final class SummaryCredentials {
     let source = SummaryAPIKey()
-    private(set) var hasKey = false
+    @ObservationIgnored var onUnavailable: () -> Void = {}
+    private(set) var hasKey = false {
+        didSet { if !hasKey { onUnavailable() } }
+    }
     private(set) var revision = 0
     private(set) var error: String?
 
