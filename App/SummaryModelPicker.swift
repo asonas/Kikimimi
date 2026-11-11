@@ -47,9 +47,10 @@ struct SummaryModelPicker: View {
         let models = env.summaryModels.lists[provider] ?? []
         let selection = Binding(get: { env.settings.settings.summaryModel }, set: { env.settings.settings.summaryModel = $0 })
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            SettingsRow("モデル") {
+            HStack(spacing: 12) {
                 if env.summaryModels.errors[provider] != nil || !env.summaryProviderReady {
-                    TextField("モデル", text: selection)
+                    TextField("モデル", text: selection).kikimimiField().frame(minWidth: 160)
                 } else {
                     Picker("モデル", selection: selection) {
                         if !models.contains(where: { $0.id == env.settings.settings.summaryModel }) {
@@ -58,14 +59,16 @@ struct SummaryModelPicker: View {
                         ForEach(models) { model in Text(model.displayName ?? model.id).tag(model.id) }
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden().frame(minHeight: 40)
                 }
                 if env.summaryModels.isLoading(provider) {
                     ProgressView().controlSize(.small).accessibilityLabel("モデル一覧を取得中")
                 }
-                Button("再読み込み") { Task { await reload() } }
+                Button("一覧を更新") { Task { await reload() } }
                     .disabled(!env.summaryProviderReady || env.summaryModels.isLoading(provider))
             }
-            if let error = env.summaryModels.errors[provider] { Text(error).font(.caption).foregroundStyle(.red) }
+            }
+            if let error = env.summaryModels.errors[provider] { Text(error).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).padding(16) }
         }
         .task(id: requestKey) {
             guard env.summaryProviderReady else { return }

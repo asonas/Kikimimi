@@ -8,28 +8,19 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .recording: "録音"
-        case .transcription: "書き起こし"
+        case .transcription: "文字起こし"
         case .calendar: "カレンダー"
         case .summary: "要約"
         case .export: "書き出し"
         }
     }
-    var symbol: String {
+    var description: String {
         switch self {
-        case .recording: "record.circle"
-        case .transcription: "waveform"
-        case .calendar: "calendar"
-        case .summary: "sparkles"
-        case .export: "square.and.arrow.up"
-        }
-    }
-    var color: Color {
-        switch self {
-        case .recording: .red
-        case .transcription: .blue
-        case .calendar: .orange
-        case .summary: .purple
-        case .export: .green
+        case .recording: "マイクと音声の許可"
+        case .transcription: "このMacで処理"
+        case .calendar: "予定を表示"
+        case .summary: "ChatGPT・APIキー"
+        case .export: "ノートの保存先"
         }
     }
 }
@@ -42,25 +33,38 @@ struct SetupView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(
-                selection: Binding<SettingsPane?>(
-                    get: { pane }, set: { if let value = $0 { selected = value.rawValue } })
-            ) {
-                ForEach(SettingsPane.allCases) { item in
-                    HStack(spacing: 10) {
-                        Image(systemName: item.symbol).foregroundStyle(.white)
-                            .frame(width: 28, height: 28)
-                            .background(item.color, in: RoundedRectangle(cornerRadius: 6))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.title)
-                            Text(subtitle(item)).font(.caption).foregroundStyle(.secondary)
-                                .lineLimit(2)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("設定").kikimimiText(.heading).padding(24)
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(SettingsPane.allCases) { item in
+                            Button { selected = item.rawValue } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack {
+                                        Text(item.title).kikimimiText(.label)
+                                        Spacer()
+                                        if item == .recording, !env.readiness.readiness.canRecord {
+                                            Circle().fill(KikimimiColor.danger).frame(width: 7, height: 7)
+                                                .accessibilityLabel("録音の準備が必要です")
+                                        }
+                                    }
+                                    Text(item.description).kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                                .background(pane == item ? KikimimiColor.selected : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(KikimimiButtonStyle.text)
+                            .accessibilityAddTraits(pane == item ? .isSelected : [])
                         }
                     }
-                    .padding(.vertical, 3).tag(item)
+                    .padding(.horizontal, 8)
                 }
+                Spacer(minLength: 16)
+                Text("Kikimimi").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary).padding(24)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+            .foregroundStyle(KikimimiColor.ink)
+            .background(KikimimiColor.paper)
+            .navigationSplitViewColumnWidth(min: 248, ideal: 248, max: 248)
         } detail: {
             Group {
                 switch pane {
@@ -71,9 +75,11 @@ struct SetupView: View {
                 case .export: ExportPane(env: env)
                 }
             }
-            .navigationTitle(pane.title)
+            .background(KikimimiColor.surface)
         }
-        .frame(minWidth: 680, idealWidth: 720, minHeight: 440, idealHeight: 520)
+        .navigationSplitViewStyle(.balanced)
+        .tint(KikimimiColor.ink)
+        .frame(minWidth: 880, idealWidth: 1040, minHeight: 600, idealHeight: 720)
         .task {
             refreshCalendar()
             env.summaryCredentials.refresh()
@@ -98,32 +104,6 @@ struct SetupView: View {
     }
     private func refreshCalendar() {
         env.calendar.refresh(calendars: env.settings.settings.calendarIDs)
-    }
-    private func subtitle(_ pane: SettingsPane) -> String {
-        switch pane {
-        case .recording: return env.readiness.readiness.canRecord ? "準備完了" : "要対応"
-        case .transcription:
-            switch env.transcription.model {
-            case .ready: return "インストール済み"
-            case .downloading(let fraction): return "ダウンロード中 \(Int(fraction * 100))%"
-            case .optimizing: return "最適化中"
-            case .notInstalled: return "未インストール"
-            case .failed: return "導入失敗"
-            }
-        case .calendar:
-            return env.calendar.access == .authorized
-                ? "許可済み・\(env.calendar.calendars.count) 件のカレンダー" : "未許可"
-        case .summary:
-            if env.settings.settings.summaryProvider == .chatGPT {
-                return env.chatGPT.signedIn ? "ChatGPT: \(env.chatGPT.email ?? "サインイン済み")" : "未設定"
-            }
-            return env.summaryCredentials.hasKey ? "API キー" : "未設定"
-        case .export:
-            return env.settings.settings.exportFolder.map {
-                URL(fileURLWithPath: $0).lastPathComponent
-            }
-                ?? "未設定"
-        }
     }
     private func logRows() {
         #if DEBUG

@@ -3,47 +3,39 @@ import SwiftUI
 struct TranscriptionPane: View {
     let env: AppEnvironment
     var body: some View {
-        Form {
-            Section {
-                modelRow
-            } header: {
-                Text("モデル")
-            } footer: {
-                Text("書き起こしは Mac の中で行い、音声は外に送りません。")
+        SettingsPage("文字起こし", description: "音声を外部に送らず、このMacで文字にします。") {
+            SettingsSection("文字起こしモデル") {
+                SettingsRow("Whisper large-v3-turbo", description: "日本語の会話に使用するモデルです。") { modelStatus }
+                if env.modelVariantOverridden {
+                    SettingsDivider()
+                    SettingsRow("検証用のモデル", description: "\(env.modelVariant)（IR_MODEL_VARIANT）。通常のモデル設定は変更していません") { EmptyView() }
+                }
             }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("録音を止めると、保存に続いて文字起こしが始まります。").kikimimiText(.body)
+                Text("ほかの録音中は待機し、録音が終わると再開します。").kikimimiText(.body)
+            }.foregroundStyle(KikimimiColor.secondary)
         }
-        .formStyle(.grouped)
     }
-    private var modelRow: some View {
-        Group {
-            LabeledContent("モデル", value: env.modelVariant).textSelection(.enabled)
-            if env.modelVariantOverridden {
-                Text("検証用のモデルに上書きされています（IR_MODEL_VARIANT）。通常のモデル設定は変更していません")
-                    .font(.caption).foregroundStyle(.orange)
+    @ViewBuilder private var modelStatus: some View {
+        switch env.transcription.model {
+        case .ready: SettingsStatus(text: "準備完了")
+        case .notInstalled:
+            VStack(alignment: .trailing, spacing: 8) {
+                Text("未インストール。録音は可能です").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                installButton("ダウンロード")
             }
-            switch env.transcription.model {
-            case .notInstalled:
-                LabeledContent("状態") {
-                    Text("未インストール。録音は可能です").foregroundStyle(.secondary)
-                    Spacer()
-                    Button("ダウンロード") { Task { await env.transcription.installModel() } }
-                        .disabled(env.recorder.phase.isCapturing || env.termination.requested)
-                }
-            case .downloading(let fraction):
-                ProgressView("モデルをダウンロード中 \(Int(fraction * 100))%", value: fraction)
-            case .optimizing:
-                ProgressView("初回の最適化をしています。しばらくお待ちください")
-            case .ready:
-                LabeledContent("状態", value: "インストール済み")
-            case .failed(let message):
-                LabeledContent("状態") {
-                    Text("導入できませんでした: \(message)").foregroundStyle(.red)
-                    Spacer()
-                    Button("再試行") { Task { await env.transcription.installModel() } }
-                        .disabled(env.recorder.phase.isCapturing || env.termination.requested)
-                }
+        case .downloading(let fraction): ProgressView("モデルをダウンロード中 \(Int(fraction * 100))%", value: fraction).frame(maxWidth: 240)
+        case .optimizing: ProgressView("初回の最適化をしています。しばらくお待ちください")
+        case .failed(let message):
+            VStack(alignment: .trailing, spacing: 8) {
+                Text("導入できませんでした: \(message)").kikimimiText(.small).foregroundStyle(KikimimiColor.danger)
+                installButton("再試行")
             }
         }
     }
-
+    private func installButton(_ title: String) -> some View {
+        Button(title) { Task { await env.transcription.installModel() } }
+            .disabled(env.recorder.phase.isCapturing || env.termination.requested)
+    }
 }

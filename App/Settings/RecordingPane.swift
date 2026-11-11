@@ -10,44 +10,57 @@ struct RecordingPane: View {
     @State private var peak: Float = -120
 
     var body: some View {
-        Form {
-            Section("許可") {
-                row("画面収録", detail: screenText, ready: env.readiness.readiness.screen == .ready) {
-                    switch env.readiness.readiness.screen {
-                    case .notGranted(let requested):
-                        if requested {
-                            Button("システム設定を開く") { openPrivacy("ScreenCapture") }
-                        } else {
-                            Button("許可を要求") {
-                                env.settings.settings.screenCaptureRequested = true
-                                env.readiness.requestScreenCapture()
-                            }
-                        }
-                    case .grantedNeedsRelaunch: Button("再起動") { env.readiness.relaunchApp() }
-                    case .grantedButFailing: Button("システム設定を開く") { openPrivacy("ScreenCapture") }
-                    case .ready: EmptyView()
+        SettingsPage("録音") {
+            SettingsSection("録音に必要な許可") {
+                SettingsRow("マイク", description: "自分の声を録音します。" + (env.readiness.readiness.mic == .authorized ? "" : "\n" + micText)) {
+                    switch env.readiness.readiness.mic {
+                    case .notDetermined: Button("許可を要求") { Task { await env.readiness.requestMicrophone() } }
+                    case .denied, .restricted: Button("システム設定を開く") { openPrivacy("Microphone") }
+                    case .authorized: SettingsStatus(text: "許可済み")
                     }
                 }
-                row("マイク", detail: micText, ready: env.readiness.readiness.mic == .authorized) {
-                    switch env.readiness.readiness.mic {
-                    case .notDetermined:
-                        Button("許可を要求") { Task { await env.readiness.requestMicrophone() } }
-                    case .denied, .restricted: Button("システム設定を開く") { openPrivacy("Microphone") }
-                    case .authorized: EmptyView()
+                SettingsDivider()
+                SettingsRow("画面収録", description: "相手のアプリの音声を取り込みます。映像は保存しません。" + (env.readiness.readiness.screen == .ready ? "" : "\n" + screenText)) {
+                    switch env.readiness.readiness.screen {
+                    case .notGranted(let requested):
+                        if requested { Button("システム設定を開く") { openPrivacy("ScreenCapture") } }
+                        else { Button("許可を要求") {
+                            env.settings.settings.screenCaptureRequested = true
+                            env.readiness.requestScreenCapture()
+                        } }
+                    case .grantedNeedsRelaunch: Button("再起動") { env.readiness.relaunchApp() }
+                    case .grantedButFailing: Button("システム設定を開く") { openPrivacy("ScreenCapture") }
+                    case .ready: SettingsStatus(text: "許可済み")
                     }
                 }
             }
-            Section("マイク入力") { microphoneInput }
-            if let remote = env.settings.settings.remote {
-                Section("相手の音声") {
-                    switch remote {
-                    case .allSystemAudio: LabeledContent("保存済みの選択", value: "システム全体の音声")
-                    case .app(_, let name): LabeledContent("保存済みのアプリ", value: name)
+            microphoneInput
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("マイクの入力").font(KikimimiFont.label.font)
+                        Spacer()
+                        Text(String(format: "%.0f dBFS", peak)).font(KikimimiFont.number.font)
+                    }
+                    ProgressView(value: Double(min(1, max(0, (peak + 75) / 75))))
+                        .tint(KikimimiColor.meterGreen).accessibilityLabel("マイク入力レベル")
+                }
+                .padding(24).foregroundStyle(.white)
+                .background(KikimimiColor.meterPanel, in: RoundedRectangle(cornerRadius: 8))
+                Text("声を出して確認できます。録音中はここでの入力確認を停止します。")
+                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+            }
+            if let inputError { Text(inputError).kikimimiText(.small).foregroundStyle(KikimimiColor.danger) }
+            SettingsSection("相手の音声") {
+                SettingsRow("前回選んだアプリ", description: "録音を始めるときに変更できます。") {
+                    switch env.settings.settings.remote {
+                    case .allSystemAudio: Text("システム全体の音声")
+                    case .app(_, let name): Text(name)
+                    case nil: Text("未選択").foregroundStyle(KikimimiColor.secondary)
                     }
                 }
             }
         }
-        .formStyle(.grouped)
         .task {
             await env.launched.value
             while !Task.isCancelled {
@@ -87,62 +100,47 @@ struct RecordingPane: View {
     }
 
     private var microphoneInput: some View {
-        Group {
-            Picker(
-                "デバイス",
-                selection: Binding(
-                    get: { env.settings.settings.mic?.deviceUID ?? "" },
-                    set: { uid in
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsSection("自分の音声") {
+                SettingsRow("マイク", description: "使用する入力を選びます。") {
+                    Picker("デバイス", selection: Binding(get: { env.settings.settings.mic?.deviceUID ?? "" }, set: { uid in
                         inputError = nil
                         env.settings.settings.mic = devices.first(where: { $0.uid == uid }).map {
                             MicPreference(deviceUID: $0.uid, deviceName: $0.name, channel: nil)
                         }
                         Task { await env.readiness.refresh() }
-                    })
-            ) {
-                Text("選択してください").tag("")
-                if let choice = env.settings.settings.mic,
-                    !devices.contains(where: { $0.uid == choice.deviceUID })
-                {
-                    Text("\(choice.deviceName)（未接続）").tag(choice.deviceUID)
-                }
-                ForEach(devices, id: \.uid) { Text($0.name).tag($0.uid) }
-            }
-            if let choice = env.settings.settings.mic {
-                Text("UID: \(choice.deviceUID)").font(.caption).foregroundStyle(.secondary)
-                    .textSelection(
-                        .enabled)
-                if let device = devices.first(where: { $0.uid == choice.deviceUID }) {
-                    Picker(
-                        "チャンネル",
-                        selection: Binding(
-                            get: { choice.channel ?? 0 },
-                            set: { value in
-                                inputError = nil
-                                env.settings.settings.mic?.channel = value == 0 ? nil : value
-                                Task { await env.readiness.refresh() }
-                            })
-                    ) {
-                        Text("全チャンネル（ミックス）").tag(0)
-                        ForEach(1...device.inputChannels, id: \.self) {
-                            Text("INPUT \($0)").tag($0)
+                    })) {
+                        Text("選択してください").tag("")
+                        if let choice = env.settings.settings.mic, !devices.contains(where: { $0.uid == choice.deviceUID }) {
+                            Text("\(choice.deviceName)（未接続）").tag(choice.deviceUID)
                         }
+                        ForEach(devices, id: \.uid) { Text($0.name).tag($0.uid) }
+                    }
+                    .pickerStyle(.menu).labelsHidden().frame(minHeight: 40)
+                }
+                SettingsDivider()
+                SettingsRow("入力チャンネル") {
+                    if let choice = env.settings.settings.mic, let device = devices.first(where: { $0.uid == choice.deviceUID }) {
+                        Picker("チャンネル", selection: Binding(get: { choice.channel ?? 0 }, set: { value in
+                            inputError = nil
+                            env.settings.settings.mic?.channel = value == 0 ? nil : value
+                            Task { await env.readiness.refresh() }
+                        })) {
+                            Text("全チャンネル（ミックス）").tag(0)
+                            ForEach(1...device.inputChannels, id: \.self) { Text("INPUT \($0)").tag($0) }
+                        }
+                        .pickerStyle(.menu).labelsHidden().frame(minHeight: 40)
+                    } else {
+                        Text("マイクを選択してください").foregroundStyle(KikimimiColor.secondary)
                     }
                 }
-                HStack {
-                    ProgressView(value: Double(min(1, max(0, (peak + 75) / 75))))
-                        .accessibilityLabel("マイク入力レベル")
-                    Text(String(format: "%.0f dBFS", peak)).font(.caption.monospacedDigit()).frame(
-                        width: 76)
-                }
-                Text(env.recorder.phase.isCapturing ? "録音中は入力の確認を停止しています" : "話してメーターが動くことを確認してください")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("使用する入力を選んでください。自動では選択しません").font(.subheadline).foregroundStyle(.secondary)
             }
-            if let inputError { Text(inputError).font(.caption).foregroundStyle(.red) }
+            if let choice = env.settings.settings.mic {
+                Text("UID: \(choice.deviceUID)").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary).textSelection(.enabled)
+            } else {
+                Text("使用する入力を選んでください。自動では選択しません").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+            }
         }
-        .pickerStyle(.menu)
         .disabled(env.recorder.phase.isCapturing)
     }
 
@@ -161,24 +159,6 @@ struct RecordingPane: View {
                 #endif
             }
         } catch { inputError = "入力デバイスを取得できませんでした: \(error.localizedDescription)" }
-    }
-
-    private func row<Actions: View>(
-        _ title: String, detail: String, ready: Bool,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .foregroundStyle(ready ? Color.green : Color.orange)
-                .accessibilityLabel(ready ? "準備完了" : "確認が必要")
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
-                Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(
-                    horizontal: false, vertical: true)
-            }
-            Spacer()
-            actions()
-        }
     }
 
     private var screenText: String {
