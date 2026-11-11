@@ -195,6 +195,13 @@ private func recordedPCM(_ url: URL) throws -> [Float] {
     #expect(levels.count == 2)
     #expect(abs((levels.first ?? 0) + 6.0206) < 0.001)
     #expect(levels.last == -120)
+    let meter = events.events.compactMap { if case .meter(_, let peak) = $0 { return peak }; return nil as Float? }
+    #expect(meter.count == 40) // 2 source seconds, excluding the five seconds of gap padding
+    #expect(meter.prefix(10).allSatisfy { abs($0 + 6.0206) < 0.001 })
+    #expect(meter.dropFirst(10).prefix(10).allSatisfy { abs($0 + 12.0412) < 0.001 })
+    #expect(meter.suffix(20).allSatisfy { $0 == -120 })
+    #expect(try recordedPCM(folder.spool(.remote)) == [Float](repeating: 0.5, count: 500)
+            + zeros(5000) + [Float](repeating: 0.25, count: 500) + zeros())
 }
 
 @Test func trackRecorderEmptySourceDoesNotCreateSpool() async throws {

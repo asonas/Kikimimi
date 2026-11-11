@@ -41,7 +41,7 @@ struct RecordingSessionView: View {
         let label = track == .me ? "自分" : "相手"
         let name = meta?.tracks[track]?.source.displayName ?? (track == .me ? "マイク" : "音声アプリ")
         let failed = isFailed(health)
-        LevelMeter(channel: "\(label)  ·  \(name)", dbFS: failed ? nil : level(track), accessibilityState: health.label)
+        LiveLevelMeter(channel: "\(label)  ·  \(name)", sample: env.recorder.meterLevels?[track], failed: failed)
         if failed {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(label)の音声が途切れました").kikimimiText(.label).foregroundStyle(KikimimiColor.warning)
@@ -61,7 +61,6 @@ struct RecordingSessionView: View {
     }
     private var hasFailure: Bool { isFailed(recording.health.me) || isFailed(recording.health.remote) }
     private func isFailed(_ health: TrackHealth) -> Bool { if case .failed = health { true } else { false } }
-    private func level(_ track: Track) -> Float? { track == .me ? env.recorder.levels?.me : env.recorder.levels?.remote }
     private func elapsed(at date: Date) -> String {
         let seconds = Int(max(0, date.timeIntervalSince(recording.startedAt)))
         return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)

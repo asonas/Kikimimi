@@ -51,7 +51,7 @@ final class AppEnvironment {
 
     func inputDevices() throws -> [InputDeviceInfo] { try LiveAudio.devices().inputDevices() }
     func remoteCandidates() async throws -> [RemoteSource] { try await LiveAudio.backend().runningRemoteCandidates() }
-    func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<Float, any Error> {
+    func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<MeterSample, any Error> {
         try await LiveAudio.microphoneLevels(device: device, channel: channel)
     }
 

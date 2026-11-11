@@ -6,12 +6,13 @@ struct LevelMeter: View {
     let dbFS: Float?
     var peakDBFS: Float? = nil
     var accessibilityState: String = ""
+    var valueText: String? = nil
 
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Text(channel).frame(maxWidth: .infinity, alignment: .leading)
-                Text(LevelMeterScale.valueText(dbFS: dbFS)).monospacedDigit()
+                MeterValueText(value: valueText ?? LevelMeterScale.valueText(dbFS: dbFS)).equatable()
             }
             .kikimimiText(.label)
             GeometryReader { geometry in
@@ -47,4 +48,9 @@ struct LevelMeter: View {
         case .red: return KikimimiColor.meterRed
         }
     }
+}
+
+private struct MeterValueText: View, Equatable {
+    let value: String
+    var body: some View { Text(value).monospacedDigit() }
 }

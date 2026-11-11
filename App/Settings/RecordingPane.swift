@@ -7,7 +7,9 @@ struct RecordingPane: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var devices: [InputDeviceInfo] = []
     @State private var inputError: String?
-    @State private var peak: Float = -120
+    @State private var peak: MeterSample?
+    @State private var previewing = false
+    @State private var previewFailed = false
 
     var body: some View {
         SettingsPage("録音") {
@@ -36,7 +38,7 @@ struct RecordingPane: View {
             }
             microphoneInput
             VStack(alignment: .leading, spacing: 8) {
-                LevelMeter(channel: "マイクの入力", dbFS: peak)
+                LiveLevelMeter(channel: "マイクの入力", sample: peak, expectedLive: previewing, failed: previewFailed)
                 Text("声を出して確認できます。録音中はここでの入力確認を停止します。")
                     .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
@@ -59,17 +61,20 @@ struct RecordingPane: View {
             }
         }
         .task(id: previewKey) {
-            peak = -120
+            peak = nil
+            previewFailed = false
             guard scenePhase == .active, !env.recorder.phase.isCapturing,
                 env.readiness.readiness.mic == .authorized,
                 let choice = env.settings.settings.mic,
                 let device = devices.first(where: { $0.uid == choice.deviceUID })
             else { return }
+            previewing = true
+            defer { previewing = false }
             do {
                 let levels = try await env.microphoneLevels(device: device, channel: choice.channel)
                 for try await value in levels { peak = value }
             } catch is CancellationError {} catch {
-                if !Task.isCancelled { inputError = "入力の確認に失敗しました: \(error.localizedDescription)" }
+                if !Task.isCancelled { previewFailed = true; inputError = "入力の確認に失敗しました: \(error.localizedDescription)" }
             }
         }
         .onChange(of: scenePhase) { _, phase in

@@ -27,6 +27,10 @@ public final class RecordingController {
     public private(set) var phase: RecordingPhase = .idle
     /// Latest peak per track for the meter. nil when not recording.
     public private(set) var levels: TrackPair<Float>?
+    /// Coalesced display samples; independent of the one-second health input above.
+    public private(set) var meterLevels: TrackPair<MeterSample?>?
+    @ObservationIgnored private var pendingMeter = TrackPair<MeterSample?>(both: nil)
+    @ObservationIgnored private var meterTask: Task<Void, Never>?
     private var running: (any RunningCapture)?
     private var lease: CaptureLease?
     private var eventTask: Task<Void, Never>?
@@ -139,13 +143,14 @@ public final class RecordingController {
             monitor = SilenceMonitor(); levels = .init(both: -120)
             let startedAt = try await store.meta(of: ref).startedAt
             _ = transition(.prepared(ref, startedAt: startedAt))
+            startMeterDisplay()
             eventTask = Task { [weak self] in
                 for await event in capture.events { await self?.handle(event, ref: ref) }
             }
         } catch {
             if let running { _ = await running.stop(); self.running = nil }
             if let created { try? await deps.store.discardIfEmpty(created) }
-            lease?.release(); lease = nil; levels = nil
+            lease?.release(); lease = nil; levels = nil; clearMeterDisplay()
             _ = transition(.prepareFailed)
             if let error = error as? StartError { throw error }
             throw .storage(String(describing: error))
@@ -171,6 +176,7 @@ public final class RecordingController {
     }
 
     private func beginStop(_ reason: EndReason) {
+        clearMeterDisplay()
         let effects = transition(.stopRequested(reason))
         if effects.contains(.stopCapture(reason: reason)) { stoppingTask = Task { await finishStop() } }
     }
@@ -180,7 +186,7 @@ public final class RecordingController {
         let diagnostics = await running?.stop() ?? .init()
         await eventTask?.value
         eventTask = nil; running = nil
-        defer { lease?.release(); lease = nil; levels = nil }
+        defer { lease?.release(); lease = nil; levels = nil; clearMeterDisplay() }
         do {
             let endedAt = deps.now()
             try await deps.store.update(stopping.ref) { meta in
@@ -208,6 +214,13 @@ public final class RecordingController {
         default: return
         }
         switch event {
+        case .meter(let t, let peak):
+            guard case .recording = phase else { return }
+            // Keep a short peak if a chunk delivers several display windows in one burst.
+            let previous = pendingMeter[t]?.dbFS
+            let value = peak.isFinite ? peak : -120
+            pendingMeter[t] = MeterSample(dbFS: max(previous ?? -120, value), at: ProcessInfo.processInfo.systemUptime)
+            return
         case .level(let t, let peak):
             track = t; levels?[t] = peak
             health = monitor.ingest(t, peakDBFS: peak, at: ProcessInfo.processInfo.systemUptime)
@@ -225,11 +238,35 @@ public final class RecordingController {
         }
     }
 
+    private func startMeterDisplay() {
+        clearMeterDisplay()
+        meterLevels = .init(both: nil)
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                guard let self else { return }
+                // One observable assignment per tick, even if a buffered source delivers a burst.
+                var next = meterLevels
+                for track in Track.allCases {
+                    if let sample = pendingMeter[track] { next?[track] = sample }
+                }
+                pendingMeter = .init(both: nil)
+                if meterLevels != next { meterLevels = next }
+            }
+        }
+    }
+
+    private func clearMeterDisplay() {
+        meterTask?.cancel(); meterTask = nil
+        pendingMeter = .init(both: nil); meterLevels = nil
+    }
+
     @discardableResult
     private func transition(_ event: RecordingEvent) -> [RecordingEffect] {
         let result = phase.applying(event)
         guard result.kind == .moved else { return [] }
         phase = result.phase
+        if case .stopping = phase { clearMeterDisplay() }
         hooks.phaseChanged(phase)
         let waiters = phaseWaiters; phaseWaiters.removeAll()
         waiters.forEach { $0.resume() }

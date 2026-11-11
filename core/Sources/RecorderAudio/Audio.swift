@@ -275,6 +275,7 @@ actor TrackRecorder {
         var failure: TrackFailure?
         var levelFrames = 0
         var peak: Float = 0
+        var meter: SamplePeakWindow?
         do {
             let stream = try await source.start()
             for try await chunk in stream {
@@ -290,6 +291,7 @@ actor TrackRecorder {
                     spool = try SpoolWriter(url: folder.spool(track), sampleRate: chunk.sampleRate)
                     clock = TrackClock(sampleRate: chunk.sampleRate, firstHostSeconds: chunk.hostSeconds)
                     digital = DigitalSilenceDetector.forTrack(track, sampleRate: chunk.sampleRate)
+                    meter = SamplePeakWindow(sampleRate: chunk.sampleRate)
                 }
                 if let active = digital?.ingest(chunk.samples) { emit(.digitalSilence(track, active: active)) }
                 let placement = clock!.placement(chunkHostSeconds: chunk.hostSeconds, frameCount: chunk.samples.count)
@@ -311,6 +313,7 @@ actor TrackRecorder {
                     }
                 }
                 failureCode = .streamStopped
+                meter?.ingest(chunk.samples) { emit(.meter(track, peakDBFS: $0)) }
             }
         } catch {
             let sourceError = error as? AudioSourceFailure
@@ -701,15 +704,20 @@ private actor TwoTrackRunning: RunningCapture {
 // MARK: - The only public surface of RecorderAudio (composition root uses these)
 
 public enum LiveAudio {
-    public static func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<Float, any Error> {
+    public static func microphoneLevels(device: InputDeviceInfo, channel: Int?) async throws -> AsyncThrowingStream<MeterSample, any Error> {
         let (id, chunks) = try await MicrophonePreview.shared.start(device: device, channel: channel)
         if Task.isCancelled { await MicrophonePreview.shared.stop(id: id); throw CancellationError() }
-        let pair = AsyncThrowingStream<Float, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let pair = AsyncThrowingStream<MeterSample, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let task = Task {
+            var meter: SamplePeakWindow?
+            var rate: Double?
             do {
                 for try await chunk in chunks {
-                    let peak = chunk.samples.reduce(Float(0)) { max($0, abs($1)) }
-                    pair.continuation.yield(peak > 0 ? 20 * log10(peak) : -120)
+                    guard chunk.sampleRate.isFinite, chunk.sampleRate >= 1 else { continue }
+                    if rate != chunk.sampleRate { rate = chunk.sampleRate; meter = SamplePeakWindow(sampleRate: chunk.sampleRate) }
+                    meter?.ingest(chunk.samples) { peak in
+                        pair.continuation.yield(MeterSample(dbFS: peak, at: ProcessInfo.processInfo.systemUptime))
+                    }
                 }
                 pair.continuation.finish()
             } catch { pair.continuation.finish(throwing: error) }

@@ -12,7 +12,9 @@ struct PrepareRecordingView: View {
     @State private var candidates: [RemoteSource] = []
     @State private var selection = ""
     @State private var devices: [InputDeviceInfo] = []
-    @State private var level: Float?
+    @State private var level: MeterSample?
+    @State private var previewing = false
+    @State private var previewFailed = false
     @State private var error: String?
     @State private var previewError: String?
     @State private var visible = false
@@ -111,7 +113,7 @@ struct PrepareRecordingView: View {
                 Spacer()
                 Button("変更", action: showRecordingSettings).buttonStyle(KikimimiButtonStyle.text).disabled(starting)
             }
-            LevelMeter(channel: "マイクの入力", dbFS: level)
+            LiveLevelMeter(channel: "マイクの入力", sample: level, expectedLive: previewing, failed: previewFailed)
             Text("話してメーターが動くことを確認できます。")
                 .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             if let previewError { Text(previewError).kikimimiText(.small).foregroundStyle(KikimimiColor.warning) }
@@ -158,10 +160,13 @@ struct PrepareRecordingView: View {
     }
     private func preview() async {
         level = nil
+        previewFailed = false
         guard visible, scenePhase == .active, !starting, !env.recorder.phase.isCapturing,
               env.readiness.readiness.mic == .authorized, let choice = env.settings.settings.mic,
               let device = devices.first(where: { $0.uid == choice.deviceUID }) else { return }
         previewError = nil
+        previewing = true
+        defer { previewing = false }
         do {
             let values = try await env.microphoneLevels(device: device, channel: choice.channel)
             for try await value in values {
@@ -169,7 +174,7 @@ struct PrepareRecordingView: View {
                 level = value
             }
         } catch is CancellationError {} catch {
-            if !Task.isCancelled { previewError = "入力の確認に失敗しました: \(error.localizedDescription)" }
+            if !Task.isCancelled { previewFailed = true; previewError = "入力の確認に失敗しました: \(error.localizedDescription)" }
         }
     }
     private func showRecordingSettings() {

@@ -199,6 +199,27 @@ private actor FakeControllerAudio: AudioFinalizer {
     await controller.stop()
 }
 
+@Test @MainActor func controllerDisplayPeaksDoNotFeedHealthAndClearOnStop() async throws {
+    let rig = try ControllerRig(); defer { rig.cleanup() }
+    let controller = rig.controller()
+    try await controller.start(controllerDraft)
+    for _ in 0..<1000 { rig.backend.capture.continuation.yield(.meter(.me, peakDBFS: -15)) }
+    // A following health event is a barrier through the ordered capture stream.
+    rig.backend.capture.continuation.yield(.level(.remote, peakDBFS: -10))
+    await waitUntil { controller.levels?.remote == -10 }
+    try await Task.sleep(for: .milliseconds(120))
+    #expect(controller.meterLevels?.me?.dbFS == -15)
+    #expect(controller.meterLevels?.me?.at != nil)
+    #expect(controller.levels?.me == -120)
+    if case .recording(let recording) = controller.phase {
+        #expect(recording.health.me == .waitingForAudio)
+        #expect(recording.health.remote == .live)
+    } else { Issue.record("display events changed the capture phase") }
+    await controller.stop()
+    #expect(controller.meterLevels == nil)
+    #expect(controller.levels == nil)
+}
+
 @Test @MainActor func controllerBothTrackFailuresStopWithCaptureLost() async throws {
     let rig = try ControllerRig(); defer { rig.cleanup() }
     let controller = rig.controller()

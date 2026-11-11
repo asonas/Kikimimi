@@ -186,21 +186,21 @@ Figma で決まっていない点は、リードが次のように決めた。�
 
 **ファイル.**
 
-- [ ] `core/Sources/RecorderCore/Meter/MeterModel.swift` を作り、`meter.test.mjs` の 8 件と同じテストを付ける。
-- [ ] `core/Sources/RecorderAudio/Audio.swift` に、表示用の 50ms ごとのレベルを流す経路を足す。保存と無音の判定は、今の 1 秒ごとの値のまま変えない。
-- [ ] `App/Design/LevelMeter.swift` に、30 個のセグメントで -60〜0 dBFS を表すメーターを作る。02、03、07 で使う。
-- [ ] `TrackMeter` と、設定の録音ページにある ProgressView のメーターを消す。
+- [x] `core/Sources/RecorderCore/Capture/MeterBallistics.swift` を作り、`meter.test.mjs` の 8 件と同じテストを `MeterBallisticsTests` に付けた（名前は MeterModel から変えた）。
+- [x] `core/Sources/RecorderAudio/Audio.swift` に、表示用の 50ms ごとのレベルを流す経路を足す。保存と無音の判定は、今の 1 秒ごとの値のまま変えない。
+- [x] `App/Design/LevelMeter.swift` に、30 個のセグメントで -60〜0 dBFS を表すメーターを作る。02、03、07 で使う。
+- [x] `TrackMeter` と、設定の録音ページにある ProgressView のメーターを消す（R4 で消した）。
 
 **見えること.**
 
-- [ ] 話すとメーターが細かく動き、黙ると下がって「−∞」になる。入力が切れると「入力停止」と出る。
+- [x] 話すとメーターが細かく動き、黙ると下がって「−∞」になる。入力が切れると「入力停止」と出る。
 
 **確かめ方.**
 
-- [ ] 単体テスト。`MeterModelTests` の 8 件。`mise run test --filter MeterModel` を実行する。
+- [x] 単体テスト。`MeterBallisticsTests` の 8 件と `SamplePeakWindowTests`。1 秒ごとの値が変わらないことは `trackRecorderEmitsLevelPeaksPerSourceSecondNotPadding` と `controllerDisplayPeaksDoNotFeedHealthAndClearOnStop` で確かめる。
 - [ ] 実画面。設定の録音ページで話し、メーターの動きを録画するかスクリーンショットを撮る。録音中の 2 本のメーターは、利用者に本物の通話で見てもらう。
-- [ ] 性能。録音中の CPU 使用率を、R4 のコミットと R5 のコミットで同じ 60 秒の録音について比べる。`top -l 60 -stats pid,cpu -pid <pid>` の平均を取る。R4 より 3 ポイント以上増えたら、描画の頻度を見直す。
-- [ ] 利用者に見てもらう。
+- [ ] 性能（未実施。リードは本物の録音を始めないため、利用者の録音で測る）。録音中の CPU 使用率を、R4 のコミットと R5 のコミットで同じ 60 秒の録音について比べる。`top -l 60 -stats pid,cpu -pid <pid>` の平均を取る。R4 より 3 ポイント以上増えたら、描画の頻度を見直す。
+- [x] 利用者に見てもらう（2026-11-11 にテスト録音で確認し、コミットの OK をもらった）。
 
 ## R6. 状態の知らせと復元の通知
 

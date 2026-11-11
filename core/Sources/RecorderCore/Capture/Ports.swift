@@ -61,8 +61,10 @@ public struct CapturePlan: Sendable {
 }
 
 public enum CaptureEvent: Sendable, Equatable {
-    /// ~1 Hz peak per track, in dBFS (-120 for digital silence). Drives the meter and the silence warning.
+    /// ~1 Hz peak per track, in dBFS (-120 for digital silence). Drives silence/health only.
     case level(Track, peakDBFS: Float)
+    /// 50 ms source-sample peak for display only. Never fed into silence/health detection.
+    case meter(Track, peakDBFS: Float)
     /// `DigitalSilenceDetector` changed state for this track (only `self` is watched). Computed on source samples,
     /// before gap padding. The controller feeds it to `SilenceMonitor`, the single owner of the resulting `TrackHealth`.
     case digitalSilence(Track, active: Bool)
