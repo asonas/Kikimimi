@@ -10,9 +10,10 @@ struct RecordingSessionView: View {
             HStack(spacing: 24) {
                 SettingsStatus(text: "録音中", ready: false, showsDot: true)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(elapsed(at: context.date)).kikimimiText(.time)
+                    Text(RecordingElapsed.string(startedAt: recording.startedAt, now: context.date)).kikimimiText(.time)
                 }
                 Spacer()
+                Button("小さく表示") { env.recorderWindows.showMini() }.buttonStyle(KikimimiButtonStyle.secondary)
                 Button("録音を停止") { Task { await env.recorder.stop() } }.buttonStyle(KikimimiButtonStyle.danger)
             }
             VStack(alignment: .leading, spacing: 16) {
@@ -61,8 +62,4 @@ struct RecordingSessionView: View {
     }
     private var hasFailure: Bool { isFailed(recording.health.me) || isFailed(recording.health.remote) }
     private func isFailed(_ health: TrackHealth) -> Bool { if case .failed = health { true } else { false } }
-    private func elapsed(at date: Date) -> String {
-        let seconds = Int(max(0, date.timeIntervalSince(recording.startedAt)))
-        return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
-    }
 }

@@ -49,11 +49,12 @@ struct LiveLevelMeter: View {
     let sample: MeterSample?
     var expectedLive = true
     var failed = false
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @State private var display = MeterDisplay()
     var body: some View {
         LevelMeter(channel: channel, dbFS: display.reading.level, peakDBFS: display.reading.peak,
-                   accessibilityState: stateText, valueText: display.reading.valueText)
+                   accessibilityState: stateText, valueText: display.reading.valueText, compact: compact)
             .onChange(of: display.reading.state) { _, _ in
                 guard NSWorkspace.shared.isVoiceOverEnabled else { return }
                 NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,

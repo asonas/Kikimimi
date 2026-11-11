@@ -21,6 +21,7 @@ final class AppEnvironment {
     let termination = TerminationCoordinator()
     let calendar = CalendarModel(source: LiveCalendar())
     let navigation = MainNavigation()
+    let recorderWindows = RecorderWindows()
     let summaryCredentials = SummaryCredentials()
     let chatGPT = ChatGPTSignIn()
     let summaryModels = SummaryModelLists()

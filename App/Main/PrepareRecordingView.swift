@@ -194,6 +194,10 @@ struct PrepareRecordingView: View {
                 try await env.recorder.start(.init(company: company, title: label.isEmpty ? nil : label,
                                                    remote: source, event: event.map(SessionEvent.init)))
                 env.settings.settings.remote = source
+                if !AppDelegate.isHeadless, case .recording(let recording) = env.recorder.phase {
+                    env.navigation.showSession(recording.ref)
+                    env.recorderWindows.showMini()
+                }
                 // MainWindowView observes the new ref and replaces the prepare route after listing refresh.
             } catch { self.error = "録音を開始できませんでした: \(error)" }
         }

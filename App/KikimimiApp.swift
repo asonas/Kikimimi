@@ -23,12 +23,16 @@ struct KikimimiApp: App {
             .windowToolbarStyle(.unified)
         Settings { SetupView(env: env) }
             .defaultSize(width: 1040, height: 720)
+        Window("録音中", id: "mini-recorder") { MiniRecorderView(env: env) }
+            .windowStyle(.hiddenTitleBar)
+            .windowResizability(.contentSize)
     }
 }
 
 private struct LaunchIcon: View {
     let env: AppEnvironment
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.openSettings) private var openSettings
     private var status: AppStatus { env.status }
     var body: some View {
@@ -42,12 +46,21 @@ private struct LaunchIcon: View {
             }
             .accessibilityLabel("Kikimimi: \(status.description)")
             .help(status.description)
+            .onChange(of: env.recorder.phase) { old, new in
+                guard !AppDelegate.isHeadless, case .recording(let recording) = old else { return }
+                if case .recording = new { return }
+                env.navigation.showSession(recording.ref)
+                env.recorderWindows.recordingEnded()
+            }
             .task {
                 guard !AppDelegate.isHeadless else { return }
                 AppDelegate.showMainWindow = {
                     openWindow(id: "main")
+                    env.recorderWindows.frontMain()
                     NSApp.activate(ignoringOtherApps: true)
                 }
+                env.recorderWindows.openMini = { openWindow(id: "mini-recorder") }
+                env.recorderWindows.closeMini = { dismissWindow(id: "mini-recorder") }
                 AppDelegate.showMainWindow?()
                 await env.launched.value
                 if !env.readiness.readiness.canRecord {

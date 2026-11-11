@@ -29,6 +29,7 @@ struct MainWindowView: View {
                 }
         }
         .frame(minWidth: 960, minHeight: 640)
+        .background(RecorderWindowCapture { env.recorderWindows.captureMain($0) }.frame(width: 0, height: 0))
         .foregroundStyle(KikimimiColor.ink)
         .background(KikimimiColor.surface)
         .tint(KikimimiColor.ink)

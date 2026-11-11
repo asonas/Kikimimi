@@ -31,6 +31,7 @@ struct MenuView: View {
     }
 
     private func show(_ id: String) {
+        if id == "main" { AppDelegate.showMainWindow?(); return }
         openWindow(id: id)
         NSApp.activate(ignoringOtherApps: true)
     }
