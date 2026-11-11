@@ -271,6 +271,12 @@ private func segments(version: Int = 1) -> SegmentsFile {
     #expect(list.first?.ref.folder.url.resolvingSymlinksInPath().path == renamed.resolvingSymlinksInPath().path)
     #expect(list.first?.durationSeconds == nil)
     #expect(list.first?.state == .needsFinalize)
+    #expect(list.first?.hasSummary == false)
+    let summary = SessionFolder(url: renamed).summary
+    try Data("## 要約\n面接の内容".utf8).write(to: summary)
+    #expect(try await store.list().first?.hasSummary == true)
+    try FileManager.default.removeItem(at: summary)
+    #expect(try await store.list().first?.hasSummary == false)
 }
 
 @Test func sessionStoreLockAndAudioEvidenceDetermineState() async throws {

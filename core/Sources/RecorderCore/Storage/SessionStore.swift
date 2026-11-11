@@ -146,6 +146,7 @@ public struct SessionListing: Sendable, Equatable, Identifiable {
     public var startedAt: Date
     public var durationSeconds: Double?     // SessionTimeline.duration, nil until finalized
     public var state: SessionState
+    public var hasSummary: Bool = false
 }
 
 // MARK: - SessionStore
@@ -234,7 +235,8 @@ public actor SessionStore {
             listings.append(SessionListing(ref: ref, company: value.company, title: value.title,
                                            startedAt: value.startedAt,
                                            durationSeconds: hasAudio ? SessionTimeline.duration(of: value) : nil,
-                                           state: try state(of: ref)))
+                                           state: try state(of: ref),
+                                           hasSummary: manager.fileExists(atPath: folder.summary.path)))
         }
         return listings.sorted {
             if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }

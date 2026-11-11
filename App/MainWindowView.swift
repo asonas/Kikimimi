@@ -2,58 +2,56 @@ import AppKit
 import SwiftUI
 import RecorderCore
 
+enum MainRoute: Hashable { case session(SessionRef) }
+
 struct MainWindowView: View {
     let env: AppEnvironment
     @Environment(\.openSettings) private var openSettings
     @State private var sessions: [SessionListing] = []
-    @State private var selection: UUID?
+    @State private var path: [MainRoute] = []
     @State private var listError: String?
     @State private var recordingRequest: RecordingRequest?
-    @State private var detailState: SessionDetailState?
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !env.readiness.readiness.canRecord {
-                HStack {
-                    Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-                    Text("録音を始めるには設定で準備を完了してください")
-                    Spacer()
-                    Button("設定を開く") { openSettings() }
-                }
-                .padding(12)
-                .background(.quaternary)
-            }
-            NavigationSplitView {
-                sidebar
-            } content: {
-                if let session = selectedSession, let detailState, detailState.ref == session.ref {
-                    SessionDetailView(env: env, session: session, state: detailState).id(session.id)
-                        .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 420)
-                } else {
-                    Color.clear.navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 420)
-                }
-            } detail: {
-                if let session = selectedSession {
-                    if let detailState, detailState.ref == session.ref {
-                        SessionDocumentView(env: env, state: detailState).id(session.id)
-                    } else {
-                        ProgressView("録音情報を読み込んでいます")
+        NavigationStack(path: $path) {
+            recordingList
+                .navigationDestination(for: MainRoute.self) { route in
+                    switch route {
+                    case .session(let ref):
+                        if let session = sessions.first(where: { $0.ref == ref }) {
+                            SessionDetailView(env: env, session: session).id(ref)
+                                .navigationBarBackButtonHidden()
+                        } else {
+                            Text("録音が見つかりません").kikimimiText(.body)
+                                .navigationBarBackButtonHidden()
+                        }
                     }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
-                        Text("録音を選択してください").font(.title2)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }
-            .navigationSplitViewStyle(.balanced)
         }
-        .frame(minWidth: 1100, minHeight: 620)
+        .frame(minWidth: 960, minHeight: 640)
+        .foregroundStyle(KikimimiColor.ink)
+        .background(KikimimiColor.surface)
+        .tint(KikimimiColor.ink)
         .toolbar {
-            Button { recordingRequest = RecordingRequest(event: nil) } label: { Label("新しい録音", systemImage: "plus") }
-                .disabled(recordingUnavailable)
+            ToolbarItem(placement: .navigation) {
+                if path.isEmpty {
+                    HStack(spacing: 12) {
+                        Image("Ear").renderingMode(.template).resizable().frame(width: 32, height: 32)
+                            .accessibilityHidden(true)
+                        Text("Kikimimi").kikimimiText(.heading)
+                    }
+                } else {
+                    Button { path.removeAll() } label: { Label("録音一覧", systemImage: "chevron.left") }
+                        .buttonStyle(KikimimiButtonStyle.text)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { openSettings() } label: { Label("設定", systemImage: "gearshape") }
+                    .buttonStyle(KikimimiButtonStyle.text)
+            }
         }
+        .toolbarBackground(KikimimiColor.paper, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .sheet(item: $recordingRequest) { NewRecordingView(env: env, event: $0.event) }
         .task { refreshCalendar() }
         .onChange(of: env.settings.settings.calendarIDs) { _, _ in refreshCalendar() }
@@ -66,112 +64,106 @@ struct MainWindowView: View {
                 do { try await Task.sleep(for: .seconds(1)) } catch { break }
             }
         }
-        .task(id: selectedSession?.ref) {
-            guard let session = selectedSession else { detailState = nil; return }
-            let state = SessionDetailState(ref: session.ref)
-            detailState = state
-            while !Task.isCancelled {
-                await state.refresh(store: env.store)
-                do { try await Task.sleep(for: .seconds(1)) } catch { break }
-            }
-        }
-        .onChange(of: activeSessionID) { _, id in
-            if let id { selection = id; Task { await refresh() } }
+        .onChange(of: activeSessionRef, initial: true) { _, ref in
+            guard let ref else { return }
+            Task { await refresh(); path = [.session(ref)] }
         }
     }
 
-    private var sidebar: some View {
-        List(selection: $selection) {
-            if env.calendar.access == .authorized, !env.calendar.events.isEmpty {
-                Section("これからの予定") {
-                    ForEach(env.calendar.events) { event in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(SessionDate.range(start: event.start, end: event.end))
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(event.title).lineLimit(2)
-                                if event.meetingURL != nil {
-                                    Image(systemName: "video").font(.caption)
-                                        .accessibilityLabel("オンライン会議リンクあり")
-                                }
-                                Spacer(minLength: 4)
-                                Button("録音") { recordingRequest = RecordingRequest(event: event) }
-                                    .controlSize(.small)
-                                    .disabled(recordingUnavailable)
-                                    .accessibilityLabel("\(event.title)の録音を準備")
-                            }
+    private var recordingList: some View {
+        MainPage {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("録音").kikimimiText(.title)
+                    Text("会話の記録を、ここから。").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                }
+                Spacer()
+                Button("新しい録音") { recordingRequest = RecordingRequest(event: nil) }
+                    .buttonStyle(KikimimiButtonStyle.primary).disabled(recordingUnavailable)
+            }
+            if !env.readiness.readiness.canRecord {
+                HStack(spacing: 16) {
+                    Text("録音を始めるには設定で準備を完了してください").kikimimiText(.label)
+                        .foregroundStyle(KikimimiColor.warning)
+                    Spacer()
+                    Button("設定を開く") { openSettings() }.buttonStyle(KikimimiButtonStyle.secondary)
+                }
+                .padding(16).background(KikimimiColor.warningBg, in: RoundedRectangle(cornerRadius: 8))
+            }
+            if env.calendar.access == .authorized, !env.calendar.events.isEmpty { upcomingEvents }
+            VStack(spacing: 12) {
+                HStack {
+                    Text("これまでの録音").kikimimiText(.heading)
+                    Spacer()
+                    Text("新しい順").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                }
+                LazyVStack(spacing: 0) {
+                    ForEach(sessions) { session in
+                        RecordingListRow(session: session, job: job(for: session), localCapture: env.localCapture(for: session.ref)) {
+                            path.append(.session(session.ref))
                         }
-                        .padding(.vertical, 4)
-                        .selectionDisabled()
+                        MainDivider()
                     }
                 }
-            }
-            Section("録音") {
-                ForEach(orderedSessions) { session in
-                    recordingRow(session).tag(session.id)
+                if sessions.isEmpty, listError == nil {
+                    Text("録音はまだありません。新しい録音から始められます。")
+                        .kikimimiText(.body).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let listError { Text(listError).foregroundStyle(.red) }
+                if let listError { Text(listError).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
             }
-        }
-        .overlay {
-            if sessions.isEmpty, listError == nil, env.calendar.events.isEmpty {
-                Text("録音はまだありません").foregroundStyle(.secondary)
+            HStack {
+                Text("録音と文字起こしは、このMacに保存されます。")
+                Spacer()
+                Text("\(sessions.count)件の録音")
             }
+            .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
         }
-        .navigationTitle("録音")
-        .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
     }
 
-    private func refreshCalendar() { env.calendar.refresh(calendars: env.settings.settings.calendarIDs) }
-
-    private var selectedSession: SessionListing? { sessions.first { $0.id == selection } }
-
-    private func recordingRow(_ session: SessionListing) -> some View {
-        let status = job(for: session)?.label ?? session.state.label
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(session.company).font(.headline).lineLimit(1)
-            if let title = session.title { Text(title).lineLimit(1) }
-            Text(SessionDate.string(session.startedAt))
-                .font(.caption).foregroundStyle(.secondary)
+    private var upcomingEvents: some View {
+        VStack(spacing: 12) {
             HStack {
-                Text(status)
-                    .font(.caption).padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
-                if let duration = session.durationSeconds {
-                    Text(Duration.seconds(duration), format: .time(pattern: .hourMinuteSecond))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text("これからの予定").kikimimiText(.heading)
+                Spacer()
+                Text("カレンダーから表示").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+            }
+            VStack(spacing: 0) {
+                ForEach(env.calendar.events) { event in
+                    HStack(spacing: 20) {
+                        Text(SessionDate.upcoming(start: event.start, end: event.end))
+                            .kikimimiText(.number).foregroundStyle(KikimimiColor.secondary)
+                            .frame(width: 190, alignment: .leading)
+                        Text(event.title).kikimimiText(.label).frame(maxWidth: .infinity, alignment: .leading)
+                        Button("録音を準備") { recordingRequest = RecordingRequest(event: event) }
+                            .buttonStyle(KikimimiButtonStyle.secondary).disabled(recordingUnavailable)
+                    }
+                    if event.id != env.calendar.events.last?.id { MainDivider() }
                 }
             }
         }
-        .padding(.vertical, 6)
+        .padding(24).background(KikimimiColor.paper, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var recordingUnavailable: Bool {
         !env.readiness.readiness.canRecord || env.recorder.phase.isCapturing || env.termination.requested
     }
-
-    private var activeSessionID: UUID? {
+    private var activeSessionRef: SessionRef? {
         switch env.recorder.phase {
-        case .recording(let recording): recording.ref.id
-        case .stopping(let stopping): stopping.ref.id
+        case .recording(let recording): recording.ref
+        case .stopping(let stopping): stopping.ref
         default: nil
         }
     }
-
-    private var orderedSessions: [SessionListing] {
-        sessions.filter { $0.state == .capturing } + sessions.filter { $0.state != .capturing }
-    }
-
     private func job(for session: SessionListing) -> TranscriptionJobState? {
         env.transcription.jobs.first { $0.id == session.id }?.state
     }
-
+    private func refreshCalendar() { env.calendar.refresh(calendars: env.settings.settings.calendarIDs) }
     private func refresh() async {
         do {
-            sessions = try await env.store.list()
-            listError = nil
-            if selection == nil { selection = activeSessionID ?? orderedSessions.first?.id }
-        } catch { listError = "録音一覧を取得できませんでした: \(error.localizedDescription)" }
+            let value = try await env.store.list()
+            guard !Task.isCancelled else { return }
+            sessions = value; listError = nil
+        } catch { if !Task.isCancelled { listError = "録音一覧を取得できませんでした: \(error.localizedDescription)" } }
     }
 }
 

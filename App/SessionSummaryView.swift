@@ -11,38 +11,52 @@ struct SessionSummaryView: View {
     @State private var confirming = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("要約").font(.title2.bold())
+        VStack(alignment: .leading, spacing: 24) {
             if summary == nil, !isRunning {
-                Text("書き起こしから面接の要点をまとめられます").foregroundStyle(.secondary)
+                Text("面接の要点をまとめる").kikimimiText(.heading)
+                Text("文字起こしから、話した内容や質問をまとめられます。\n作成した要約は、文字起こしと一緒にノートへ書き出せます。")
+                    .kikimimiText(.body).foregroundStyle(KikimimiColor.secondary)
             }
             if isRunning {
                 HStack {
-                    ProgressView("要約を作成しています")
-                    Button("キャンセル") { env.summaryJobs.cancel(ref: ref) }
+                    ProgressView("要約を作成しています").tint(KikimimiColor.ink)
+                    Button("キャンセル") { env.summaryJobs.cancel(ref: ref) }.buttonStyle(KikimimiButtonStyle.secondary)
                 }
-            } else {
-                Button(summary == nil ? "要約を作成" : "要約を作り直す") {
-                    if env.settings.settings.summaryConsent { start() }
-                    else { confirming = true }
-                }
-                .disabled(!transcriptAvailable || !env.summaryProviderReady ||
-                          env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if !env.summaryProviderReady {
-                    Text("要約には設定でChatGPTにサインインするか、APIキーを保存してください").font(.caption).foregroundStyle(.secondary)
-                }
+            } else if summary == nil {
+                Button("要約を作成", action: requestSummary).buttonStyle(KikimimiButtonStyle.primary).disabled(unavailableReason != nil)
+                Text("作成するときに、文字起こしをOpenAIへ送信します。")
+                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            if case .failed(let message) = job { Text(message).foregroundStyle(.red).textSelection(.enabled) }
+            if let reason = unavailableReason { Text(reason).kikimimiText(.small).foregroundStyle(KikimimiColor.secondary) }
+            if let error { Text(error).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
+            if case .failed(let message) = job { Text(message).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
             if let summary {
-                SummaryMarkdownView(markdown: summary)
+                SummaryMarkdownView(markdown: summary).frame(maxWidth: 888, alignment: .leading)
+                MainDivider()
+                HStack(spacing: 12) {
+                    Text("要約は自動生成された内容です。必要に応じて文字起こしと照合してください。")
+                        .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                    Spacer()
+                    Button("作り直す", action: requestSummary).buttonStyle(KikimimiButtonStyle.secondary)
+                        .disabled(isRunning || unavailableReason != nil)
+                }
             }
         }
-        .confirmationDialog("書き起こしをOpenAIに送信しますか？", isPresented: $confirming, titleVisibility: .visible) {
-            Button("送信して要約を作成") { env.settings.settings.summaryConsent = true; start() }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("要約を作成するため、この面接の書き起こしテキストをOpenAIへ送信します。音声は送信しません。次回からは要約ボタンで送信します")
+        .sheet(isPresented: $confirming) {
+            MainSheet {
+                Text("文字起こしを送信して要約します").kikimimiText(.heading)
+                Text("この録音の文字起こしをOpenAIへ送信します。\n音声ファイルは送信しません。").kikimimiText(.body)
+                Text("次回からは「要約を作成」を押すと送信します。")
+                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                HStack {
+                    Button("キャンセル") { confirming = false }.buttonStyle(KikimimiButtonStyle.secondary)
+                    Spacer()
+                    Button("送信して要約を作成") {
+                        env.settings.settings.summaryConsent = true; confirming = false; start()
+                    }
+                    .buttonStyle(KikimimiButtonStyle.primary).disabled(unavailableReason != nil)
+                }
+            }
         }
         .task(id: ref) {
             env.summaryCredentials.refresh()
@@ -57,6 +71,15 @@ struct SessionSummaryView: View {
 
     private var job: SummaryJob? { env.summaryJobs.jobs[ref] }
     private var isRunning: Bool { job == .running }
+    private var unavailableReason: String? {
+        if !transcriptAvailable { return "要約には文字起こしが必要です" }
+        if !env.summaryProviderReady { return "要約には設定でChatGPTにサインインするか、APIキーを保存してください" }
+        if env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "設定で要約モデルを選んでください" }
+        return nil
+    }
+    private func requestSummary() {
+        if env.settings.settings.summaryConsent { start() } else { confirming = true }
+    }
 
     private func start() {
         error = nil
@@ -78,16 +101,16 @@ private struct SummaryMarkdownView: View {
             ForEach(Array(markdown.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
                 switch SummaryLine.classify(String(line)) {
                 case .heading(let text):
-                    Text(inline(text)).font(.title3.bold()).padding(.top, 12)
+                    Text(inline(text)).kikimimiText(.heading).padding(.top, 12)
                         .accessibilityAddTraits(.isHeader)
                 case .bullet(let text, let depth):
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("•")
+                        Text("・")
                         Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.leading, 12 + CGFloat(depth) * 16)
+                    .kikimimiText(.body).padding(.leading, CGFloat(depth) * 16)
                 case .paragraph(let text):
-                    Text(inline(text)).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(inline(text)).kikimimiText(.body).frame(maxWidth: .infinity, alignment: .leading)
                 case .blank:
                     Color.clear.frame(height: 8).accessibilityHidden(true)
                 }

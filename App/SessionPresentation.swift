@@ -2,6 +2,25 @@ import SwiftUI
 import RecorderCore
 
 enum SessionDate {
+    static func formatted(_ date: Date, _ pattern: String, timeZone: TimeZone? = nil) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone ?? .current
+        formatter.dateFormat = pattern
+        return formatter.string(from: date)
+    }
+    static func day(_ date: Date) -> String { formatted(date, "M月d日") }
+    static func detail(_ date: Date, timeZone: TimeZone? = nil) -> String { formatted(date, "yyyy年M月d日 HH:mm", timeZone: timeZone) }
+    static func upcoming(start: Date, end: Date) -> String {
+        let day = Calendar.current.isDateInToday(start) ? "今日" : day(start)
+        let endPattern = Calendar.current.isDate(start, inSameDayAs: end) ? "HH:mm" : "M月d日 HH:mm"
+        return "\(day)  \(formatted(start, "HH:mm"))–\(formatted(end, endPattern))"
+    }
+    static func duration(_ seconds: Double) -> String {
+        let total = seconds.isFinite ? Int(max(0, seconds)) : 0
+        return String(format: "%d分%02d秒", total / 60, total % 60)
+    }
     static func range(start: Date, end: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ja_JP")
@@ -29,14 +48,14 @@ struct TrackMeter: View {
             HStack {
                 Text(label)
                 Spacer()
-                Text(health.label).foregroundStyle(health.isProblem ? .orange : .secondary)
+                Text(health.label).foregroundStyle(health.isProblem ? KikimimiColor.warning : KikimimiColor.secondary)
             }
-            .font(.caption)
+            .font(KikimimiFont.small.font)
             HStack {
                 ProgressView(value: Double(min(1, max(0, ((peak ?? -120) + 75) / 75))))
-                    .tint(health.isProblem ? .orange : .green)
+                    .tint(health.isProblem ? KikimimiColor.warning : KikimimiColor.success)
                     .accessibilityLabel("\(label)の録音レベル")
-                Text(String(format: "%.0f dBFS", peak ?? -120)).font(.caption.monospacedDigit()).frame(width: 72)
+                Text(String(format: "%.0f dBFS", peak ?? -120)).font(KikimimiFont.number.font).frame(width: 72)
             }
         }
     }

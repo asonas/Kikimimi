@@ -18,7 +18,9 @@ struct KikimimiApp: App {
         MenuBarExtra { MenuView(env: env) } label: { LaunchIcon(env: env) }
             .menuBarExtraStyle(.window)
         Window("Kikimimi", id: "main") { MainWindowView(env: env) }
-            .defaultSize(width: 1080, height: 760)
+            .defaultSize(width: 1120, height: 840)
+            .windowStyle(.hiddenTitleBar)
+            .windowToolbarStyle(.unified)
         Settings { SetupView(env: env) }
             .defaultSize(width: 1040, height: 720)
         Window("新しい録音", id: "new-recording") { NewRecordingView(env: env) }

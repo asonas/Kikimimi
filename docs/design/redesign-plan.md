@@ -139,23 +139,23 @@ Figma で決まっていない点は、リードが次のように決めた。�
 
 **ファイル.**
 
-- [ ] `App/MainWindowView.swift` を一覧（01）だけの画面に作り直す。これからの予定、録音の行、件数、保存先の説明を出す。
-- [ ] `App/Main/SessionPageView.swift` を作る。タブ（文字起こし、要約）と、タブの行の右端に「録音の情報」を置く（05、06、14）。
-- [ ] `App/Main/SessionInfoSheet.swift` を作る（詳細 / 録音の情報）。中に「文字起こしをやり直す」と「Finder で表示」を置く。
-- [ ] `App/Main/CopyDoneSheet.swift` を作る（完了 / Markdown をコピー）。
-- [ ] 3 列用に作った `SessionDetailView.swift` のうち、使わなくなる部分を消す。
-- [ ] `RecorderCore` に `SessionPage` を置く。
+- [x] `App/MainWindowView.swift` を一覧（01）だけの画面に作り直す。これからの予定、録音の行、件数、保存先の説明を出す。
+- [x] `App/Main/SessionPageView.swift` を作る。タブ（文字起こし、要約）と、タブの行の右端に「録音の情報」を置く（05、06、14）。
+- [x] `App/Main/SessionInfoSheet.swift` を作る（詳細 / 録音の情報）。中に「文字起こしをやり直す」と「Finder で表示」を置く。
+- [x] `App/Main/CopyDoneSheet.swift` を作る（完了 / Markdown をコピー）。
+- [x] 3 列用に作った `SessionDetailView.swift` のうち、使わなくなる部分を消す。
+- [x] `RecorderCore` に `SessionPage` を置く。
 
 **見えること.**
 
-- [ ] 起動すると録音一覧が出る。行を開くと全幅のページが出て、左上の「録音一覧」で戻れる。
+- [x] 起動すると録音一覧が出る。行を開くと全幅のページが出て、左上の「録音一覧」で戻れる。
 
 **確かめ方.**
 
-- [ ] 単体テスト。`SessionPageTests` で、SessionState と TranscriptionJobState の組み合わせごとに、出すページを表にしてテストする。`mise run test --filter SessionPage` を実行する。
-- [ ] 実画面。01、05、06、14、録音の情報について、実際の録音（2026-11-10 の面接）でスクリーンショットを撮り、Figma の画像と比べる。
-- [ ] 性能。一覧の 1 秒ごとの再読み込みは今のまま残す。開いているページだけが 1 秒ごとに読み直していることを、ログで確かめる。
-- [ ] 利用者に見てもらう。
+- [x] 単体テスト。`SessionPageTests` で、SessionState と TranscriptionJobState の組み合わせごとに、出すページを表にしてテストする。`mise run test --filter SessionPage` を実行する。
+- [x] 実画面。01、05、06、14、録音の情報について、実際の録音（2026-11-10 の面接）でスクリーンショットを撮り、Figma の画像と比べる。
+- [x] 性能。一覧の 1 秒ごとの再読み込みは今のまま残す。開いているページだけが 1 秒ごとに読み直していることを、ログで確かめる。
+- [x] 利用者に見てもらう。
 
 ## R4. 録音の準備、録音中、保存後
 
