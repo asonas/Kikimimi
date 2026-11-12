@@ -40,17 +40,33 @@ struct RecordingListRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(session.company).kikimimiText(.heading)
                     if let title = session.title { Text(title).kikimimiText(.small).foregroundStyle(KikimimiColor.secondary) }
+                    if page != .document { status }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Text(session.durationSeconds.map(SessionDate.duration) ?? "—")
-                    .kikimimiText(.number).foregroundStyle(KikimimiColor.secondary).frame(width: 100, alignment: .leading)
-                Text(SessionPage.statusText(state: session.state, job: job, localCapture: localCapture, hasSummary: session.hasSummary))
-                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary).frame(width: 140, alignment: .leading)
-                Text("開く").kikimimiText(.label).frame(width: 48)
+                    .kikimimiText(.number).foregroundStyle(KikimimiColor.secondary).frame(width: 100, alignment: .trailing)
+                Image(systemName: "chevron.right").font(KikimimiFont.label.font)
+                    .foregroundStyle(KikimimiColor.secondary).accessibilityHidden(true)
             }
             .padding(.vertical, 18).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var page: SessionPage { .resolve(state: session.state, job: job, localCapture: localCapture) }
+    private var tone: NoticeTone? {
+        switch (page, session.state, job) {
+        case (.needsAttention, .unusable, _), (.transcribing, _, .failed?): .danger
+        case (.needsAttention, _, _): .warning
+        default: nil
+        }
+    }
+    private var status: some View {
+        HStack(spacing: 4) {
+            if let tone { Image(systemName: tone.symbol).accessibilityHidden(true) }
+            Text(SessionPage.statusText(state: session.state, job: job, localCapture: localCapture, hasSummary: session.hasSummary))
+        }
+        .kikimimiText(.small).foregroundStyle(tone?.foreground ?? KikimimiColor.secondary)
     }
 }
 
