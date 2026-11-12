@@ -37,7 +37,6 @@ struct SessionDetailView: View {
                 exportStatus
                 if exportFailed {
                     Notice(tone: .danger, title: "ノートを書き出せませんでした",
-                           message: "保存先のフォルダを確認してください。録音と文字起こしはこのMacに残っています。",
                            action: .init(label: "保存先を確認", perform: showExportSettings))
                 }
             } else {
@@ -54,8 +53,6 @@ struct SessionDetailView: View {
         .sheet(isPresented: $copied) {
             MainSheet {
                 SettingsStatus(text: "Markdownをコピーしました", showsDot: true)
-                Text("文字起こしをコピーしました。\nメモや文書に貼り付けて使えます。")
-                    .kikimimiText(.body).foregroundStyle(KikimimiColor.secondary)
                 Button("文字起こしに戻る") { state.tab = .transcript; copied = false }
                     .buttonStyle(KikimimiButtonStyle.primary)
             }
@@ -130,7 +127,6 @@ struct SessionDetailView: View {
         }
         if state.exportOutdated {
             Notice(tone: .warning, title: "書き出したノートより新しい内容があります",
-                   message: "文字起こしか要約を更新しました。もう一度書き出すとノートに反映されます。",
                    action: .init(label: "もう一度書き出す",
                                  isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !isExporting && !env.termination.requested,
                                  perform: requestExport))

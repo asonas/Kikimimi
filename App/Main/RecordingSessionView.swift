@@ -25,14 +25,8 @@ struct RecordingSessionView: View {
             }
             if !hasFailure {
                 MainDivider()
-                Text("ウィンドウを閉じても録音は続きます。\nメニューバーからも録音を止められます。")
-                    .kikimimiText(.body).foregroundStyle(KikimimiColor.secondary)
-                HStack {
-                    Text("音声はこのMacに保存されます。")
-                    Spacer()
-                    Text("文字起こしは録音終了後")
-                }
-                .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                Text("ウィンドウを閉じても録音は続きます")
+                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
         }
     }

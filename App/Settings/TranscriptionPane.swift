@@ -22,14 +22,14 @@ struct TranscriptionPane: View {
         case .ready: SettingsStatus(text: "準備完了")
         case .notInstalled:
             VStack(alignment: .trailing, spacing: 8) {
-                Text("未インストール。録音は可能です").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                Text("未ダウンロード").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
                 installButton("ダウンロード")
             }
         case .downloading(let fraction): ProgressView("モデルをダウンロード中 \(Int(fraction * 100))%", value: fraction).frame(maxWidth: 240)
         case .optimizing: ProgressView("初回の最適化をしています。しばらくお待ちください")
         case .failed(let message):
             VStack(alignment: .trailing, spacing: 8) {
-                Text("導入できませんでした: \(message)").kikimimiText(.small).foregroundStyle(KikimimiColor.danger)
+                Text("ダウンロードできませんでした: \(message)").kikimimiText(.small).foregroundStyle(KikimimiColor.danger)
                 installButton("再試行")
             }
         }

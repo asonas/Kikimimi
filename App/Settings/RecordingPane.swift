@@ -16,7 +16,7 @@ struct RecordingPane: View {
             SettingsSection("録音に必要な許可") {
                 SettingsRow("マイク", description: "自分の声を録音します。" + (env.readiness.readiness.mic == .authorized ? "" : "\n" + micText)) {
                     switch env.readiness.readiness.mic {
-                    case .notDetermined: Button("許可を要求") { Task { await env.readiness.requestMicrophone() } }
+                    case .notDetermined: Button("許可する") { Task { await env.readiness.requestMicrophone() } }
                     case .denied, .restricted: Button("システム設定を開く") { openPrivacy("Microphone") }
                     case .authorized: SettingsStatus(text: "許可済み")
                     }
@@ -26,7 +26,7 @@ struct RecordingPane: View {
                     switch env.readiness.readiness.screen {
                     case .notGranted(let requested):
                         if requested { Button("システム設定を開く") { openPrivacy("ScreenCapture") } }
-                        else { Button("許可を要求") {
+                        else { Button("許可する") {
                             env.settings.settings.screenCaptureRequested = true
                             env.readiness.requestScreenCapture()
                         } }
@@ -39,7 +39,7 @@ struct RecordingPane: View {
             microphoneInput
             VStack(alignment: .leading, spacing: 8) {
                 LiveLevelMeter(channel: "マイクの入力", sample: peak, expectedLive: previewing, failed: previewFailed)
-                Text("声を出して確認できます。録音中はここでの入力確認を停止します。")
+                Text("録音中は入力確認を停止します。")
                     .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
             if let inputError { Text(inputError).kikimimiText(.small).foregroundStyle(KikimimiColor.danger) }
@@ -97,7 +97,7 @@ struct RecordingPane: View {
     private var microphoneInput: some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsSection("自分の音声") {
-                SettingsRow("マイク", description: "使用する入力を選びます。") {
+                SettingsRow("マイク") {
                     Picker("デバイス", selection: Binding(get: { env.settings.settings.mic?.deviceUID ?? "" }, set: { uid in
                         inputError = nil
                         env.settings.settings.mic = devices.first(where: { $0.uid == uid }).map {

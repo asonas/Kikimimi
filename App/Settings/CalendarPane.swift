@@ -31,7 +31,7 @@ struct CalendarPane: View {
                             Toggle(isOn: Binding(get: { isEnabled(calendar.id) }, set: { enabled in setEnabled(enabled, id: calendar.id) })) {
                                 Text(isEnabled(calendar.id) ? "表示する" : "表示しない")
                             }
-                            .toggleStyle(.switch).tint(KikimimiColor.ink).frame(minHeight: 40).fixedSize()
+                            .labelsHidden().toggleStyle(.switch).tint(KikimimiColor.ink).frame(minHeight: 40).fixedSize()
                             .accessibilityLabel("\(calendar.title)を表示")
                         }
                     }

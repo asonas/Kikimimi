@@ -14,8 +14,6 @@ struct SessionSummaryView: View {
         VStack(alignment: .leading, spacing: 24) {
             if summary == nil, !isRunning {
                 Text("面接の要点をまとめる").kikimimiText(.heading)
-                Text("文字起こしから、話した内容や質問をまとめられます。\n作成した要約は、文字起こしと一緒にノートへ書き出せます。")
-                    .kikimimiText(.body).foregroundStyle(KikimimiColor.secondary)
             }
             if isRunning {
                 HStack {

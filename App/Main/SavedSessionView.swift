@@ -8,11 +8,10 @@ struct SavedSessionView: View {
     let job: TranscriptionJobState?
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Notice(tone: .success, title: "録音を保存しました", message: "自分と相手の音声は、このMacに保存されています。")
+            Notice(tone: .success, title: "録音を保存しました")
             switch job {
             case .waiting(.modelNotReady):
-                Notice(tone: .warning, title: "モデルをダウンロードしてください",
-                       message: "音声は録音できます。文字起こしには、最初にモデルの準備が必要です。",
+                Notice(tone: .warning, title: "文字起こしにはモデルのダウンロードが必要です",
                        action: .init(label: "ダウンロード", isEnabled: {
                            switch env.transcription.model {
                            case .downloading, .optimizing: false
@@ -21,10 +20,10 @@ struct SavedSessionView: View {
                        }()) { Task { await env.transcription.installModel() } })
             case .waiting(.recordingInProgress):
                 Notice(tone: .warning, title: "録音が終わるのを待っています",
-                       message: "音声は保存済みです。いまの録音が終わると、文字起こしを再開します。")
+                       message: "いまの録音が終わると、文字起こしを始めます。")
             case .failed(let message):
                 Notice(tone: .danger, title: "文字起こしができませんでした",
-                       message: "録音した音声は保存されています。「やり直す」で、もう一度文字起こしします。",
+                       message: "録音した音声は残っています。",
                        action: .init(label: "やり直す", isEnabled: !env.termination.requested) { env.transcription.enqueue(session.ref) })
                 Text(message).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).textSelection(.enabled)
             default:
@@ -56,7 +55,7 @@ struct SavedSessionView: View {
                 .frame(height: 6).accessibilityElement(children: .ignore)
                 .accessibilityLabel("文字起こし、\(Int(fraction * 100))パーセント")
             }
-            Text(panelDescription).kikimimiText(.body).foregroundStyle(KikimimiColor.secondary)
+            if let panelDescription { Text(panelDescription).kikimimiText(.body).foregroundStyle(KikimimiColor.secondary) }
             if job == nil || job == .done {
                 Button("文字起こしを開始") { env.transcription.enqueue(session.ref) }
                     .buttonStyle(KikimimiButtonStyle.secondary).disabled(env.termination.requested)
@@ -72,11 +71,11 @@ struct SavedSessionView: View {
     private var panelTitle: String {
         if case .running = job { "文字起こし中" } else { "文字起こしを待っています" }
     }
-    private var panelDescription: String {
+    private var panelDescription: String? {
         switch job {
-        case .queued: "音声は保存済みです。順番が来ると、文字起こしを開始します。"
-        case nil, .done: "音声は保存済みです。文字起こしを開始できます。"
-        default: "このMacで音声を文字にしています。\n別の録音を読んだり、ウィンドウを閉じたりしても処理は続きます。"
+        case .queued: "順番が来ると始まります。"
+        case nil, .done: nil
+        default: "ウィンドウを閉じても処理は続きます。"
         }
     }
 }

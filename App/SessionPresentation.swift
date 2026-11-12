@@ -74,7 +74,7 @@ extension SessionState {
     var label: String {
         switch self {
         case .capturing: "録音中"
-        case .needsFinalize: "要保存処理"
+        case .needsFinalize: "保存が未完了"
         case .readyToTranscribe: "文字起こし待ち"
         case .transcribed: "文字起こし済み"
         case .unusable: "録音を確認してください"
@@ -90,7 +90,7 @@ extension TranscriptionJobState {
         switch self {
         case .queued: "文字起こし待ち"
         case .waiting(.recordingInProgress): "録音終了後に文字起こし"
-        case .waiting(.modelNotReady): "モデルの導入待ち"
+        case .waiting(.modelNotReady): "モデルのダウンロード待ち"
         case .running(let fraction): "文字起こし中 \(Int(fraction * 100))%"
         case .failed(let message): "文字起こし失敗: \(message)"
         case .done: "文字起こし済み"

@@ -41,11 +41,7 @@ struct PrepareRecordingView: View {
                 field("タイトル（任意）", text: $title)
             }
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("録音する音声").kikimimiText(.heading)
-                    Spacer()
-                    Text("自分と相手を分けて保存").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
-                }
+                Text("録音する音声").kikimimiText(.heading)
                 HStack(alignment: .top, spacing: 24) { microphoneCard; remoteCard }
                 HStack(spacing: 12) {
                     SettingsStatus(text: env.readiness.readiness.mic == .authorized ? "マイクの許可済み" : "マイクの許可が必要です",
@@ -61,8 +57,6 @@ struct PrepareRecordingView: View {
             }
             if let error { Text(error).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
             HStack(spacing: 16) {
-                Text("文字起こしは録音を止めた後に始まります。")
-                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
                 Spacer()
                 Button("キャンセル") { env.navigation.cancelPrepare() }.buttonStyle(KikimimiButtonStyle.secondary).disabled(starting)
                 Button(starting ? "録音を準備しています" : "録音を開始", action: start)
@@ -111,8 +105,6 @@ struct PrepareRecordingView: View {
                 Button("変更", action: showRecordingSettings).buttonStyle(KikimimiButtonStyle.text).disabled(starting)
             }
             LiveLevelMeter(channel: "マイクの入力", sample: level, expectedLive: previewing, failed: previewFailed)
-            Text("話してメーターが動くことを確認できます。")
-                .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             if let previewError { Text(previewError).kikimimiText(.small).foregroundStyle(KikimimiColor.warning) }
         }
         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -131,9 +123,6 @@ struct PrepareRecordingView: View {
             }
             if selectedSource == .allSystemAudio {
                 Text("通知など、他のアプリの音も録音されます").kikimimiText(.small).foregroundStyle(KikimimiColor.warning)
-            } else {
-                Text("このアプリの音だけを録音します。\n別のアプリや通知の音は含みません。")
-                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
             Text("相手の入力確認は録音開始後に行います。")
                 .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)

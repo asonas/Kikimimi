@@ -103,7 +103,9 @@ struct MainWindowView: View {
                 HStack {
                     Text("これまでの録音").kikimimiText(.heading)
                     Spacer()
-                    Text("新しい順").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                    if !sessions.isEmpty {
+                        Text("\(sessions.count)件").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                    }
                 }
                 LazyVStack(spacing: 0) {
                     ForEach(sessions) { session in
@@ -114,17 +116,11 @@ struct MainWindowView: View {
                     }
                 }
                 if sessions.isEmpty, listError == nil {
-                    Text("録音はまだありません。新しい録音から始められます。")
+                    Text("録音はまだありません")
                         .kikimimiText(.body).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let listError { Text(listError).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
             }
-            HStack {
-                Text("録音と文字起こしは、このMacに保存されます。")
-                Spacer()
-                Text("\(sessions.count)件の録音")
-            }
-            .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
         }
     }
 
@@ -133,7 +129,6 @@ struct MainWindowView: View {
             HStack {
                 Text("これからの予定").kikimimiText(.heading)
                 Spacer()
-                Text("カレンダーから表示").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
             }
             VStack(spacing: 0) {
                 ForEach(env.calendar.events) { event in

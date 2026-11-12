@@ -24,7 +24,6 @@ struct ExportPane: View {
                     Text("要約（作成されている場合）").kikimimiText(.body)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("各録音の「ノートを書き出す」から保存します。").kikimimiText(.small)
                     Text("同じ録音を書き出すと、同じ名前のノートを更新します。").kikimimiText(.small)
                     Text("音声ファイルはこのフォルダにコピーされません。").kikimimiText(.small)
                 }.foregroundStyle(KikimimiColor.secondary)
