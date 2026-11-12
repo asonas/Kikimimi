@@ -56,12 +56,8 @@ struct PrepareRecordingView: View {
                 }
             }
             if !env.readiness.readiness.canRecord {
-                HStack {
-                    Text("設定で録音の準備を完了してください").kikimimiText(.label).foregroundStyle(KikimimiColor.warning)
-                    Spacer()
-                    Button("設定を開く", action: showRecordingSettings).buttonStyle(KikimimiButtonStyle.secondary)
-                }
-                .padding(16).background(KikimimiColor.warningBg, in: RoundedRectangle(cornerRadius: 8))
+                Notice(tone: .warning, title: "録音の準備が終わっていません",
+                       action: .init(label: "設定を開く", perform: showRecordingSettings))
             }
             if let error { Text(error).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).textSelection(.enabled) }
             HStack(spacing: 16) {

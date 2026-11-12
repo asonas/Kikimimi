@@ -16,6 +16,13 @@ enum NoticeTone {
         case .danger: KikimimiColor.dangerBg
         }
     }
+    var symbol: String {
+        switch self {
+        case .success: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .danger: "exclamationmark.circle.fill"
+        }
+    }
 }
 
 struct Notice: View {
@@ -30,16 +37,18 @@ struct Notice: View {
     var action: Action? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: tone.symbol).font(KikimimiFont.label.font).foregroundStyle(tone.foreground)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title).kikimimiText(.label).foregroundStyle(tone.foreground)
-                Spacer(minLength: 0)
-                if let action {
-                    Button(action.label, action: action.perform).buttonStyle(KikimimiButtonStyle.secondary)
-                        .disabled(!action.isEnabled)
-                }
+                if let message { Text(message).kikimimiText(.small).foregroundStyle(KikimimiColor.secondary) }
             }
-            if let message { Text(message).kikimimiText(.small).foregroundStyle(KikimimiColor.secondary) }
+            Spacer(minLength: 12)
+            if let action {
+                Button(action.label, action: action.perform).buttonStyle(KikimimiButtonStyle.secondary)
+                    .disabled(!action.isEnabled)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(16)
         .background(tone.background, in: RoundedRectangle(cornerRadius: 8))

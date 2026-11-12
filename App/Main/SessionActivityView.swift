@@ -25,15 +25,17 @@ struct SessionActivityView: View {
         case .needsAttention:
             VStack(alignment: .leading, spacing: 24) {
                 if session.state == .capturing {
-                    Text("別のアプリで録音中です").kikimimiText(.body)
+                    Notice(tone: .warning, title: "別のアプリで録音中です")
                 }
                 if session.state == .needsFinalize {
-                    Text("録音の保存処理を完了できませんでした。録音の情報から音声を確認してください。")
-                        .kikimimiText(.body).foregroundStyle(KikimimiColor.warning)
+                    Notice(tone: .warning, title: "録音の保存を完了できませんでした",
+                           message: "録音の情報から音声を確認してください。")
                 }
                 if case .unusable(let message) = session.state {
-                    Text("録音を確認してください: \(message)").kikimimiText(.body)
-                        .foregroundStyle(KikimimiColor.warning).textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Notice(tone: .danger, title: "録音を確認してください")
+                        Text(message).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).textSelection(.enabled)
+                    }
                 }
                 ForEach([Track.me, .remote], id: \.self) { track in
                     Text(SessionTrackPresentation.text(track, meta: state.meta)).kikimimiText(.label).textSelection(.enabled)

@@ -44,15 +44,10 @@ struct RecordingSessionView: View {
         let failed = isFailed(health)
         LiveLevelMeter(channel: "\(label)  ·  \(name)", sample: env.recorder.meterLevels?[track], failed: failed)
         if failed {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(label)の音声が途切れました").kikimimiText(.label).foregroundStyle(KikimimiColor.warning)
-                Text(track == .me
-                     ? "マイクの接続を確認してください。今の録音では入力を再開できないため、停止してから録音をやり直してください。"
-                     : "録音するアプリを確認してください。今の録音では入力を再開できないため、停止してから録音をやり直してください。")
-                    .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-            .background(KikimimiColor.warningBg, in: RoundedRectangle(cornerRadius: 8))
+            Notice(tone: .warning, title: "\(label)の音声が途切れました",
+                   message: track == .me
+                       ? "この録音では再開できません。録音を止めて、マイクの接続を確認してください。"
+                       : "この録音では再開できません。録音を止めて、録音するアプリを確認してください。")
         } else if isFailed(other), health == .live {
             SettingsStatus(text: "\(label)の音声は録音を続けています", showsDot: true)
         } else if health != .live {

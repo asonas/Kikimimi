@@ -95,13 +95,8 @@ struct MainWindowView: View {
                     .buttonStyle(KikimimiButtonStyle.primary).disabled(recordingUnavailable)
             }
             if !env.readiness.readiness.canRecord {
-                HStack(spacing: 16) {
-                    Text("録音を始めるには設定で準備を完了してください").kikimimiText(.label)
-                        .foregroundStyle(KikimimiColor.warning)
-                    Spacer()
-                    Button("設定を開く") { openSettings() }.buttonStyle(KikimimiButtonStyle.secondary)
-                }
-                .padding(16).background(KikimimiColor.warningBg, in: RoundedRectangle(cornerRadius: 8))
+                Notice(tone: .warning, title: "録音の準備が終わっていません",
+                       action: .init(label: "設定を開く") { openSettings() })
             }
             if env.calendar.access == .authorized, !env.calendar.events.isEmpty { upcomingEvents }
             VStack(spacing: 12) {
