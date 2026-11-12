@@ -46,10 +46,13 @@ struct MainWindowView: View {
                         .buttonStyle(KikimimiButtonStyle.text)
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button { openSettings() } label: { Label("設定", systemImage: "gearshape") }
+            .withoutGlassBackground()
+            FlexibleToolbarSpace()
+            ToolbarItem {
+                Button { openSettings() } label: { Label("設定", systemImage: "gearshape").labelStyle(.titleAndIcon) }
                     .buttonStyle(KikimimiButtonStyle.text)
             }
+            .withoutGlassBackground()
         }
         .toolbarBackground(KikimimiColor.paper, for: .windowToolbar)
         .toolbarBackground(.visible, for: .windowToolbar)
@@ -164,5 +167,19 @@ struct MainWindowView: View {
             guard !Task.isCancelled else { return }
             sessions = value; listError = nil
         } catch { if !Task.isCancelled { listError = "録音一覧を取得できませんでした: \(error.localizedDescription)" } }
+    }
+}
+
+/// Pushes the following items to the trailing edge; macOS 26 packs toolbar items from the leading edge without one.
+private struct FlexibleToolbarSpace: ToolbarContent {
+    var body: some ToolbarContent {
+        if #available(macOS 26, *) { ToolbarSpacer(.flexible) } else { ToolbarItem { EmptyView() } }
+    }
+}
+
+private extension ToolbarContent {
+    /// Figma draws the toolbar items flat on the paper band; macOS 26 wraps each item in a glass capsule by default.
+    @ToolbarContentBuilder func withoutGlassBackground() -> some ToolbarContent {
+        if #available(macOS 26, *) { sharedBackgroundVisibility(.hidden) } else { self }
     }
 }
