@@ -4,7 +4,7 @@ import SwiftUI
 struct CalendarPane: View {
     let env: AppEnvironment
     var body: some View {
-        SettingsPage("カレンダー", description: "予定を表示して、面接の録音を準備しやすくします。") {
+        SettingsPage("カレンダー") {
             SettingsSection("カレンダーへのアクセス") {
                 SettingsRow("アクセス", description: "許可しなくても録音できます。") {
                     switch env.calendar.access {

@@ -89,10 +89,7 @@ struct MainWindowView: View {
             }
             if env.readiness.readiness.screen == .grantedNeedsRelaunch { PermissionRelaunchNotice(env: env) }
             HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("録音").kikimimiText(.title)
-                    Text("会話の記録を、ここから。").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
-                }
+                Text("録音").kikimimiText(.title)
                 Spacer()
                 Button("新しい録音") { env.navigation.prepare() }
                     .buttonStyle(KikimimiButtonStyle.primary).disabled(recordingUnavailable)

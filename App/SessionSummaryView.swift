@@ -34,7 +34,7 @@ struct SessionSummaryView: View {
                 SummaryMarkdownView(markdown: summary).frame(maxWidth: 888, alignment: .leading)
                 MainDivider()
                 HStack(spacing: 12) {
-                    Text("要約は自動生成された内容です。必要に応じて文字起こしと照合してください。")
+                    Text("要約はOpenAIのモデルが書いた文章です。気になるところは文字起こしで確かめてください。")
                         .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
                     Spacer()
                     Button("作り直す", action: requestSummary).buttonStyle(KikimimiButtonStyle.secondary)

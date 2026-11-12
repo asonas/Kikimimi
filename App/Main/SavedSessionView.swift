@@ -24,7 +24,7 @@ struct SavedSessionView: View {
                        message: "音声は保存済みです。いまの録音が終わると、文字起こしを再開します。")
             case .failed(let message):
                 Notice(tone: .danger, title: "文字起こしができませんでした",
-                       message: "録音した音声は保存されています。もう一度お試しください。",
+                       message: "録音した音声は保存されています。「やり直す」で、もう一度文字起こしします。",
                        action: .init(label: "やり直す", isEnabled: !env.termination.requested) { env.transcription.enqueue(session.ref) })
                 Text(message).kikimimiText(.small).foregroundStyle(KikimimiColor.danger).textSelection(.enabled)
             default:
