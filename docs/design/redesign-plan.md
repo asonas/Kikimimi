@@ -33,7 +33,7 @@ Figma で決まっていない点は、リードが次のように決めた。�
 
 ## 前提となる事実
 
-- Design の仕様書は `docs/design/redesign-spec.md` にある（R0 で取り込む）。24 画面の画像は `docs/design/figma/` に置く。
+- Design の仕様書は `docs/design/redesign-spec.md` にある（R0 で取り込む）。画面の見た目は Figma を見る（R0 で置いた `docs/design/figma/` の画像は削除した）。
 - 要約の処理は表示中の View が `@State` で持っていて、画面から外れると取り消される（`App/SessionSummaryView.swift:53`）。ページを行き来する作りにする前に、処理を View の外へ移す必要がある。
 - 録音中のメーターは 1 秒に 1 回しか更新されない（`core/Sources/RecorderAudio/Audio.swift:231`）。無音の判定（`SilenceMonitor`）は、この 1 秒ごとの値で動いている。
 - 色、文字、ボタンを共通で決めた仕組みはまだない。アセットカタログには色が入っていない。
@@ -314,5 +314,4 @@ Figma で決まっていない点は、リードが次のように決めた。�
 
 - `docs/design/redesign-spec.md`（Figma から書き起こした仕様。節 7 に、Figma で決まっていない点の一覧がある）
 - `docs/design/unslop/README.md`（Codex の設計資料。配色の根拠とメーターの方針）
-- `docs/design/figma/*.png`（各画面の画像）
 - `GLOSSARY.md`（Session、Track などの用語）
