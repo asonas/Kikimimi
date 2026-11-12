@@ -75,6 +75,19 @@ struct MainWindowView: View {
 
     private var recordingList: some View {
         MainPage {
+            if let newest = env.recoveredSessions.first {
+                Notice(tone: .success, title: "前回の録音を復元しました",
+                       message: (env.recoveredSessions.count > 1 ? "\(env.recoveredSessions.count)件の録音を復元しました。" : "")
+                        + "中断までに残った音声を保存しました。内容を確認して、文字起こしを開始できます。",
+                       action: .init(label: "録音を確認") {
+                           Task {
+                               await refresh()
+                               env.navigation.showSession(newest)
+                               env.recoveredSessions = []
+                           }
+                       })
+            }
+            if env.readiness.readiness.screen == .grantedNeedsRelaunch { PermissionRelaunchNotice(env: env) }
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("録音").kikimimiText(.title)

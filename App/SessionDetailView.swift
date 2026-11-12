@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 import RecorderCore
 
@@ -11,6 +12,7 @@ struct SessionDetailView: View {
     @State private var copied = false
     @State private var exporting = false
     @State private var actionError: String?
+    @State private var exportFailed = false
 
     init(env: AppEnvironment, session: SessionListing) {
         self.env = env; self.session = session
@@ -33,6 +35,11 @@ struct SessionDetailView: View {
                 case .summary: SessionSummaryView(env: env, ref: session.ref, transcriptAvailable: state.markdownAvailable)
                 }
                 exportStatus
+                if exportFailed {
+                    Notice(tone: .danger, title: "ノートを書き出せませんでした",
+                           message: "保存先のフォルダを確認してください。録音と文字起こしはこのMacに残っています。",
+                           action: .init(label: "保存先を確認", perform: showExportSettings))
+                }
             } else {
                 SessionActivityView(env: env, session: session, state: state, job: job)
                 if page == .needsAttention {
@@ -108,23 +115,34 @@ struct SessionDetailView: View {
                     .kikimimiText(.small).foregroundStyle(KikimimiColor.secondary).textSelection(.enabled)
                 Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: exported.path)]) }
                     .buttonStyle(KikimimiButtonStyle.text)
-                if state.exportOutdated {
-                    Text("書き出し後に文字起こしか要約が更新されています")
-                        .kikimimiText(.small).foregroundStyle(KikimimiColor.warning)
-                }
             }
+        }
+        if state.exportOutdated {
+            Notice(tone: .warning, title: "書き出したノートより新しい内容があります",
+                   message: "文字起こしか要約を更新しました。もう一度書き出すとノートに反映されます。",
+                   action: .init(label: "もう一度書き出す",
+                                 isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !exporting && !env.termination.requested) {
+                       if let path = env.settings.settings.exportFolder { exportNote(to: path) }
+                   })
         }
     }
     private func exportNote(to path: String) {
         guard !exporting else { return }
-        exporting = true; actionError = nil
+        exporting = true; actionError = nil; exportFailed = false
         Task {
             defer { exporting = false }
             do {
                 try await env.store.exportNote(session.ref, to: URL(fileURLWithPath: path, isDirectory: true))
                 await state.refresh(store: env.store)
-            } catch { actionError = "書き出せませんでした: \(error.localizedDescription)" }
+            } catch {
+                exportFailed = true
+                Logger(subsystem: "as.ason.Kikimimi", category: "export").error("Note export failed: \(error.localizedDescription, privacy: .private)")
+            }
         }
+    }
+    private func showExportSettings() {
+        UserDefaults.standard.set(SettingsPane.export.rawValue, forKey: "settings.selectedPane")
+        openSettings()
     }
     private func copyMarkdown() {
         actionError = nil

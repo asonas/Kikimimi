@@ -28,6 +28,7 @@ struct PrepareRecordingView: View {
 
     var body: some View {
         MainPage {
+            if env.readiness.readiness.screen == .grantedNeedsRelaunch { PermissionRelaunchNotice(env: env) }
             VStack(alignment: .leading, spacing: 4) {
                 Text("録音の準備").kikimimiText(.title)
                 if let event {

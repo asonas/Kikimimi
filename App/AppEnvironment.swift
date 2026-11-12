@@ -22,6 +22,11 @@ final class AppEnvironment {
     let calendar = CalendarModel(source: LiveCalendar())
     let navigation = MainNavigation()
     let recorderWindows = RecorderWindows()
+    private let recovery: RecoveredSessions
+    var recoveredSessions: [SessionRef] {
+        get { recovery.refs }
+        set { recovery.refs = newValue }
+    }
     let summaryCredentials = SummaryCredentials()
     let chatGPT = ChatGPTSignIn()
     let summaryModels = SummaryModelLists()
@@ -98,22 +103,29 @@ final class AppEnvironment {
             os: ProcessInfo.processInfo.operatingSystemVersionString)
         let recorder = RecordingController(.init(store: store, backend: LiveAudio.backend(), devices: devices,
             finalizer: finalizer, app: app), readiness: { readiness.readiness }, mic: { settings.settings.mic }, hooks: hooks)
+        let recovery = RecoveredSessions()
         let launched = Task {
-            do { _ = try await LaunchRecovery.run(store: store, finalizer: finalizer) }
-            catch { Logger(subsystem: "as.ason.Kikimimi", category: "launch").error("Launch recovery could not list sessions") }
+            let refs: [SessionRef]
+            do { refs = try await LaunchRecovery.run(store: store, finalizer: finalizer) }
+            catch {
+                refs = []
+                Logger(subsystem: "as.ason.Kikimimi", category: "launch").error("Launch recovery could not list sessions")
+            }
             await readiness.refresh()
+            recovery.refs = refs
         }
         return AppEnvironment(settings: settings, store: store, readiness: readiness,
             recorder: recorder, transcription: transcription, launched: launched,
-            modelVariant: variant, modelVariantOverridden: override != nil)
+            modelVariant: variant, modelVariantOverridden: override != nil, recovery: recovery)
     }
 
     private init(settings: SettingsStore, store: SessionStore, readiness: ReadinessModel,
                  recorder: RecordingController, transcription: TranscriptionService, launched: Task<Void, Never>,
-                 modelVariant: String, modelVariantOverridden: Bool) {
+                 modelVariant: String, modelVariantOverridden: Bool, recovery: RecoveredSessions) {
         self.settings = settings; self.store = store; self.readiness = readiness
         self.recorder = recorder; self.transcription = transcription; self.launched = launched
         self.modelVariant = modelVariant; self.modelVariantOverridden = modelVariantOverridden
+        self.recovery = recovery
         summaryCredentials.onUnavailable = { [weak self] in
             guard let self, self.settings.settings.summaryProvider == .apiKey else { return }
             self.summaryJobs.cancelAll()
