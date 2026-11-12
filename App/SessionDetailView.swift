@@ -10,7 +10,7 @@ struct SessionDetailView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var showingInfo = false
     @State private var copied = false
-    @State private var exporting = false
+    @State private var exportStep: NoteExportStep?
     @State private var actionError: String?
     @State private var exportFailed = false
 
@@ -60,6 +60,17 @@ struct SessionDetailView: View {
                     .buttonStyle(KikimimiButtonStyle.primary)
             }
         }
+        .sheet(isPresented: Binding(get: { exportStep != nil }, set: { presented in
+            if !presented, !isExporting { exportStep = nil }
+        })) {
+            if let exportStep {
+                NoteExportSheet(step: exportStep,
+                                target: [session.company, session.title].compactMap { $0 }.joined(separator: " / "),
+                                hasSummary: session.hasSummary,
+                                cancel: { if case .confirming = self.exportStep { self.exportStep = nil } }, confirm: exportNote,
+                                close: { self.exportStep = nil })
+            }
+        }
         .task(id: session.ref) {
             while !Task.isCancelled {
                 await state.refresh(store: env.store)
@@ -89,9 +100,9 @@ struct SessionDetailView: View {
                 Button("Markdownをコピー", action: copyMarkdown).buttonStyle(KikimimiButtonStyle.secondary)
                     .disabled(!state.markdownAvailable)
             }
-            if let path = env.settings.settings.exportFolder {
-                Button("ノートを書き出す") { exportNote(to: path) }.buttonStyle(KikimimiButtonStyle.primary)
-                    .disabled(!state.segmentsAvailable || exporting || env.termination.requested)
+            if env.settings.settings.exportFolder != nil {
+                Button("ノートを書き出す", action: requestExport).buttonStyle(KikimimiButtonStyle.primary)
+                    .disabled(!state.segmentsAvailable || isExporting || env.termination.requested)
             } else {
                 Button("書き出し先を設定") { openSettings() }.buttonStyle(KikimimiButtonStyle.secondary)
             }
@@ -121,20 +132,25 @@ struct SessionDetailView: View {
             Notice(tone: .warning, title: "書き出したノートより新しい内容があります",
                    message: "文字起こしか要約を更新しました。もう一度書き出すとノートに反映されます。",
                    action: .init(label: "もう一度書き出す",
-                                 isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !exporting && !env.termination.requested) {
-                       if let path = env.settings.settings.exportFolder { exportNote(to: path) }
-                   })
+                                 isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !isExporting && !env.termination.requested,
+                                 perform: requestExport))
         }
     }
-    private func exportNote(to path: String) {
-        guard !exporting else { return }
-        exporting = true; actionError = nil; exportFailed = false
+    private var isExporting: Bool { if case .exporting = exportStep { true } else { false } }
+    private func requestExport() {
+        guard exportStep == nil, let path = env.settings.settings.exportFolder else { return }
+        exportStep = .confirming(URL(fileURLWithPath: path, isDirectory: true))
+    }
+    private func exportNote(to destination: URL) {
+        guard case .confirming(let confirmed) = exportStep, confirmed == destination else { return }
+        exportStep = .exporting(destination); actionError = nil; exportFailed = false
         Task {
-            defer { exporting = false }
             do {
-                try await env.store.exportNote(session.ref, to: URL(fileURLWithPath: path, isDirectory: true))
+                let exported = try await env.store.exportNote(session.ref, to: destination)
                 await state.refresh(store: env.store)
+                exportStep = .done(exported)
             } catch {
+                exportStep = nil
                 exportFailed = true
                 Logger(subsystem: "as.ason.Kikimimi", category: "export").error("Note export failed: \(error.localizedDescription, privacy: .private)")
             }
