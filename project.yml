@@ -11,6 +11,9 @@ options:
 packages:
   RecorderKit:
     path: core                       # WhisperKit is resolved through core/Package.swift; this file never mentions it
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.7.0
 configs:
   Debug: debug
   Release: release
@@ -44,6 +47,8 @@ targets:
         product: RecorderWhisper
       - package: RecorderKit
         product: RecorderSummary
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         # One bundle ID for Debug and Release. ASO-109 renamed the identity; TCC needs a one-time re-grant.
@@ -68,6 +73,12 @@ targets:
         # per-session flock lease, not from instance counting.
         NSMicrophoneUsageDescription: 面接の音声を、相手側の音声とは別トラックで録音するためにマイクを使用します。
         NSCalendarsFullAccessUsageDescription: 面接の予定を表示し、録音の開始や保存名に使うためにカレンダーを読み取ります。
+        # Sparkle. The feed is served by GitHub Pages from the gh-pages branch; the EdDSA private key is in the login
+        # keychain under the account "kikimimi" (generate_keys --account kikimimi). Updates are never installed silently.
+        SUFeedURL: https://asonas.github.io/Kikimimi/appcast.xml
+        SUPublicEDKey: "E27pMh4IuNGvNT8Ixsy8PZ9nwv68/9tPreMUrh8XLrE="
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     entitlements:
       path: App/Kikimimi.entitlements
       properties:

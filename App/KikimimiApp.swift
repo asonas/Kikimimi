@@ -6,11 +6,15 @@ import RecorderCore
 struct KikimimiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var env: AppEnvironment
+    @State private var updater: AppUpdater
 
     init() {
         let environment = AppEnvironment.live()
         _env = State(initialValue: environment)
         AppDelegate.environment = environment
+        let updater = AppUpdater(isRecording: { if case .recording = environment.recorder.phase { true } else { false } })
+        _updater = State(initialValue: updater)
+        if !AppDelegate.isHeadless { updater.start() }
     }
 
     var body: some Scene {
@@ -21,6 +25,11 @@ struct KikimimiApp: App {
             .defaultSize(width: 1120, height: 840)
             .windowStyle(.hiddenTitleBar)
             .windowToolbarStyle(.unified)
+            .commands {
+                CommandGroup(after: .appInfo) {
+                    Button("アップデートを確認…") { updater.checkForUpdates() }.disabled(!updater.canCheckForUpdates)
+                }
+            }
         Settings { SetupView(env: env) }
             .defaultSize(width: 1040, height: 720)
         Window("録音中", id: "mini-recorder") { MiniRecorderView(env: env) }
