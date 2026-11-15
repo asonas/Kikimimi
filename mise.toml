@@ -17,6 +17,15 @@ TEAM_ID = "QYP65434UW"
 BUILD_DIR = "build"
 # One stable path for the Debug product, so Launch Services and TCC see one app for the bundle ID.
 APP_PATH = "build/development/Build/Products/Debug/Kikimimi.app"
+# Release. The Developer ID certificate and the notarytool profile belong to the team, not to one app, so the profile
+# created for YoruMimizuku is reused. `mise run setup-notary` creates it on a machine that does not have it.
+SIGN_IDENTITY = "Developer ID Application: Yuya Fujiwara (QYP65434UW)"
+NOTARY_PROFILE = "YoruMimizukuNotary"
+GITHUB_REPO = "asonas/Kikimimi"
+# Sparkle's tools come with the Swift package, so they always match the framework version in the app.
+SPARKLE_BIN = "build/release/SourcePackages/artifacts/sparkle/Sparkle/bin"
+# Keychain account of the EdDSA key that signs updates (generate_keys --account kikimimi).
+SPARKLE_ACCOUNT = "kikimimi"
 
 [tasks.generate]
 description = "Generate the Xcode project from project.yml"
@@ -69,3 +78,152 @@ fi
 # Bash 3.2 with nounset treats an empty array as unset.
 open -n -W ${launch_env[@]+"${launch_env[@]}"} --stdout "$log.stdout.log" --stderr "$log.stderr.log" "$PWD/$APP_PATH" --args
 """
+
+# ---- Release: Developer ID signed, notarized DMG + Sparkle update. See docs/release.md. ----
+# Chain: archive -> export -> notarize-app -> dmg -> notarize, and notarize-app -> sparkle-zip -> appcast.
+# The .app is notarized and stapled first, so the DMG and the Sparkle ZIP both carry the same stapled bundle.
+
+[tasks.archive]
+description = "Archive the Release app"
+depends = ["generate"]
+run = """
+set -euo pipefail
+xcodebuild archive \
+  -scheme "$SCHEME" \
+  -project "$PROJECT" \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -derivedDataPath "$BUILD_DIR/release" \
+  -archivePath "$BUILD_DIR/$APP_NAME.xcarchive"
+"""
+
+[tasks.export]
+description = "Export a Developer ID signed .app from the archive"
+depends = ["archive"]
+run = """
+set -euo pipefail
+command rm -rf "$BUILD_DIR/export"
+xcodebuild -exportArchive \
+  -archivePath "$BUILD_DIR/$APP_NAME.xcarchive" \
+  -exportOptionsPlist ExportOptions.plist \
+  -exportPath "$BUILD_DIR/export"
+codesign --verify --deep --strict "$BUILD_DIR/export/$APP_NAME.app"
+codesign -d -r- "$BUILD_DIR/export/$APP_NAME.app"
+"""
+
+[tasks."notarize-app"]
+description = "Notarize and staple the exported .app"
+depends = ["export"]
+run = """
+set -euo pipefail
+app="$BUILD_DIR/export/$APP_NAME.app"
+zip="$BUILD_DIR/$APP_NAME-notary.zip"
+command rm -f "$zip"
+ditto -c -k --keepParent "$app" "$zip"
+xcrun notarytool submit "$zip" --keychain-profile "$NOTARY_PROFILE" --wait
+xcrun stapler staple "$app"
+spctl -a -vvv -t exec "$app"
+command rm -f "$zip"
+"""
+
+[tasks.dmg]
+description = "Package the stapled .app into a signed DMG with an /Applications drop link"
+depends = ["notarize-app"]
+run = """
+set -euo pipefail
+app="$BUILD_DIR/export/$APP_NAME.app"
+staging="$BUILD_DIR/dmg-staging"
+rw_dmg="$BUILD_DIR/$APP_NAME-rw.dmg"
+final_dmg="$BUILD_DIR/$APP_NAME.dmg"
+command rm -rf "$staging" "$rw_dmg" "$final_dmg"
+mkdir -p "$staging"
+command cp -R "$app" "$staging/"
+ln -s /Applications "$staging/Applications"
+hdiutil create -volname "$APP_NAME" -srcfolder "$staging" -fs HFS+ -format UDRW -ov "$rw_dmg"
+# Icon layout is best-effort: without a Finder session the DMG is still valid, only unstyled.
+mount_dir="$(mktemp -d)"
+hdiutil attach "$rw_dmg" -mountpoint "$mount_dir" -nobrowse -noautoopen
+osascript scripts/dmg-layout.applescript "$APP_NAME" "$APP_NAME.app" || true
+sync
+hdiutil detach "$mount_dir" || hdiutil detach "$mount_dir" -force
+rmdir "$mount_dir" || true
+hdiutil convert "$rw_dmg" -format UDZO -imagekey zlib-level=9 -ov -o "$final_dmg"
+command rm -rf "$rw_dmg" "$staging"
+codesign --force --timestamp --sign "$SIGN_IDENTITY" "$final_dmg"
+"""
+
+[tasks.notarize]
+description = "Notarize and staple the DMG, then check it with Gatekeeper"
+depends = ["dmg"]
+run = """
+set -euo pipefail
+xcrun notarytool submit "$BUILD_DIR/$APP_NAME.dmg" --keychain-profile "$NOTARY_PROFILE" --wait
+xcrun stapler staple "$BUILD_DIR/$APP_NAME.dmg"
+spctl -a -vvv -t open --context context:primary-signature "$BUILD_DIR/$APP_NAME.dmg"
+"""
+
+[tasks."sparkle-zip"]
+description = "Create the Sparkle update ZIP from the stapled .app"
+depends = ["notarize-app"]
+run = """
+set -euo pipefail
+version="$(scripts/version.sh)"
+zip="$BUILD_DIR/$APP_NAME-$version.zip"
+command rm -f "$zip"
+ditto -c -k --keepParent "$BUILD_DIR/export/$APP_NAME.app" "$zip"
+echo "Sparkle ZIP: $zip"
+"""
+
+[tasks.appcast]
+description = "Sign the update ZIP and generate build/appcast.xml"
+depends = ["sparkle-zip"]
+run = """
+set -euo pipefail
+version="$(scripts/version.sh)"
+archives="$BUILD_DIR/appcast"
+command rm -rf "$archives"
+mkdir -p "$archives"
+command cp "$BUILD_DIR/$APP_NAME-$version.zip" "$archives/"
+"$SPARKLE_BIN/generate_appcast" \
+  --account "$SPARKLE_ACCOUNT" \
+  --download-url-prefix "https://github.com/$GITHUB_REPO/releases/download/v$version/" \
+  "$archives"
+command cp "$archives/appcast.xml" "$BUILD_DIR/appcast.xml"
+echo "Appcast: $BUILD_DIR/appcast.xml"
+"""
+
+[tasks.release]
+description = "Build every release artifact: notarized DMG, Sparkle ZIP, appcast.xml"
+depends = ["notarize", "appcast"]
+run = 'echo "Ready: $BUILD_DIR/$APP_NAME.dmg, $BUILD_DIR/$APP_NAME-$(scripts/version.sh).zip, $BUILD_DIR/appcast.xml"'
+
+[tasks."publish:release"]
+description = "Create the GitHub Release for the current version (the tag must already be pushed)"
+run = """
+set -euo pipefail
+version="$(scripts/version.sh)"
+git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || { echo "Push the tag v$version first." >&2; exit 1; }
+gh release create "v$version" \
+  "$BUILD_DIR/$APP_NAME-$version.zip" \
+  "$BUILD_DIR/$APP_NAME.dmg" \
+  --repo "$GITHUB_REPO" \
+  --verify-tag \
+  --title "$APP_NAME $version" \
+  --notes-file "$BUILD_DIR/release-notes-$version.md"
+"""
+
+[tasks."publish:appcast"]
+description = "Publish build/appcast.xml to the gh-pages branch and wait for the Pages build"
+run = "scripts/publish-appcast.sh"
+
+[tasks.setup-notary]
+description = "Store notarytool credentials in the keychain (once per machine, interactive)"
+run = """
+echo "Apple ID and an app-specific password (from account.apple.com) are required."
+xcrun notarytool store-credentials "$NOTARY_PROFILE" --team-id "$TEAM_ID"
+"""
+
+[tasks.bump]
+description = "Set MARKETING_VERSION in project.yml, increment the build number, and regenerate"
+usage = 'arg "version" help="New marketing version, e.g. 0.2.0"'
+run = './scripts/bump-version.sh "$usage_version"'
