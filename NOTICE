@@ -1,0 +1,9 @@
+Kikimimi
+Copyright 2026 Yuya Fujiwara
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes the following third-party software, each under the MIT License:
+
+- WhisperKit (https://github.com/argmaxinc/WhisperKit)
+- Sparkle (https://github.com/sparkle-project/Sparkle)
