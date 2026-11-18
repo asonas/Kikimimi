@@ -29,15 +29,21 @@ else
 fi
 
 # A failed Pages build keeps serving the old file forever, so ask the build API instead of polling the URL.
-echo "Waiting for the GitHub Pages build..."
+# Right after a push the latest build is still the previous one, so only a build of the gh-pages head counts.
+head="$(git ls-remote origin refs/heads/gh-pages | cut -f1)"
+echo "Waiting for the GitHub Pages build of ${head:0:7}..."
+status=missing
 for _ in $(seq 1 30); do
-  status="$(gh api "repos/$GITHUB_REPO/pages/builds/latest" --jq .status)"
-  case "$status" in
-    built) break ;;
-    errored) echo "Pages build failed. Retry with: gh api -X POST repos/$GITHUB_REPO/pages/builds" >&2; exit 1 ;;
-  esac
+  build="$(gh api "repos/$GITHUB_REPO/pages/builds/latest" --jq '"\(.commit) \(.status)"')"
+  if [[ "${build%% *}" == "$head" ]]; then
+    status="${build##* }"
+    case "$status" in
+      built) break ;;
+      errored) echo "Pages build failed. Retry with: gh api -X POST repos/$GITHUB_REPO/pages/builds" >&2; exit 1 ;;
+    esac
+  fi
   sleep 10
 done
-[[ "$status" == built ]] || { echo "Pages build still '$status' after 5 minutes." >&2; exit 1; }
+[[ "$status" == built ]] || { echo "Pages build of ${head:0:7} is '$status' after 5 minutes." >&2; exit 1; }
 owner="${GITHUB_REPO%%/*}"; name="${GITHUB_REPO##*/}"
 echo "Published. Check: https://$owner.github.io/$name/appcast.xml"
