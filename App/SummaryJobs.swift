@@ -26,6 +26,7 @@ final class SummaryJobs {
         let id = UUID()
         let model = env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let source = env.summaryTokenSource
+        let usesChatGPT = env.settings.settings.summaryProvider == .chatGPT
         jobs[ref] = .running
         let task = Task { () -> SummaryJob? in
             var outcome: SummaryJob?
@@ -42,7 +43,8 @@ final class SummaryJobs {
             // An old cancelled task must not touch a replacement job for the same session either.
             if operations[ref]?.id == id { jobs[ref] = outcome; operations[ref] = nil } else { outcome = nil }
             // Not awaited: a slow keychain read must not hold back the result the automatic export waits for.
-            Task { await env.chatGPT.refresh() }
+            // Only after a ChatGPT run, which may have rotated its tokens; the API key path never reads that item.
+            if usesChatGPT { Task { await env.chatGPT.refresh() } }
             return outcome
         }
         operations[ref] = (id, task)

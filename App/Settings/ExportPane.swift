@@ -21,7 +21,10 @@ struct ExportPane: View {
             SettingsSection("自動で処理") {
                 SettingsRow("文字起こしが終わったら、要約してノートを書き出す", description: autoDescription) {
                     Toggle(isOn: Binding(get: { autoEnabled }, set: { on in
-                        if on { confirmingAuto = true } else { env.settings.settings.autoSummarizeAndExport = false }
+                        if on { confirmingAuto = true } else {
+                            env.settings.settings.autoSummarizeAndExport = false
+                            env.autoFollowUp.switchTurnedOff()
+                        }
                     })) { Text(autoEnabled ? "オン" : "オフ") }
                     .labelsHidden().toggleStyle(.switch).tint(KikimimiColor.ink).frame(minHeight: 40).fixedSize()
                     // Turning it off stays possible after a setting was undone; only turning it on needs every setting.
@@ -55,15 +58,17 @@ struct ExportPane: View {
                     Button("キャンセル") { confirmingAuto = false }.buttonStyle(KikimimiButtonStyle.secondary)
                     Spacer()
                     Button("オンにする") {
+                        confirmingAuto = false
+                        // A folder moved in Finder while the sheet was open does not redraw it, so check again here.
+                        // The description then names what is missing.
+                        guard missing.isEmpty else { return }
                         env.settings.settings.summaryConsent = true
                         env.settings.settings.autoSummarizeAndExport = true
-                        confirmingAuto = false
                     }
                     .buttonStyle(KikimimiButtonStyle.primary).keyboardShortcut(.defaultAction).disabled(!missing.isEmpty)
                 }
             }
         }
-        .task { env.summaryCredentials.refresh(); await env.chatGPT.refresh() }
     }
     private var autoEnabled: Bool { env.settings.settings.autoSummarizeAndExport }
     private var missing: [AutoFollowUpRequirement] { env.autoFollowUp.missingRequirements }

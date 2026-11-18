@@ -47,40 +47,52 @@ final class AutoFollowUp {
 
     func isRunning(_ ref: SessionRef) -> Bool { states[ref] == .running }
 
+    /// Turning the switch off withdraws the consent, so a summary it started is cancelled: the transcript may not
+    /// have been sent yet (the request first waits for a token). A run the user asked for with "もう一度試す" stays.
+    func switchTurnedOff() {
+        guard let env = environment else { return }
+        for ref in startedBySwitch { env.summaryJobs.cancel(ref: ref) }
+    }
+
+    @ObservationIgnored private var startedBySwitch: Set<SessionRef> = []
+
     private func run(_ ref: SessionRef, needsSwitch: Bool) {
         // Headless runs are scripted checks; they must never send anything to the provider.
         guard !AppDelegate.isHeadless, let env = environment, states[ref] != .running else { return }
         if needsSwitch, !env.settings.settings.autoSummarizeAndExport { return }
         states[ref] = .running
+        if needsSwitch { startedBySwitch.insert(ref) }
         Task {
+            defer { startedBySwitch.remove(ref) }
             // Credentials are loaded only when a screen asks for them, so a recording made right after launch would
-            // otherwise look as if nothing were set up.
-            // Only the selected provider: reading the other one's keychain item could wait on an unrelated prompt.
-            switch env.settings.settings.summaryProvider {
-            case .apiKey: env.summaryCredentials.refresh()
-            case .chatGPT: await env.chatGPT.refresh()
-            }
+            // otherwise look as if nothing were set up. Only the selected provider: reading the other one's keychain
+            // item could wait on an unrelated prompt.
+            if env.settings.settings.summaryProvider == .chatGPT { await env.chatGPT.refresh() }
+            // Synchronous, and after the await, so a switch to the API key during it is still checked.
+            if env.settings.settings.summaryProvider == .apiKey { env.summaryCredentials.refresh() }
             // From here to `start` nothing awaits, so the settings checked are the settings the summary uses.
             if (needsSwitch && !env.settings.settings.autoSummarizeAndExport) || env.termination.requested {
                 states[ref] = nil; return
             }
             let missing = missingRequirements
+            // Joining a summary the user started by hand: turning the switch off must not cancel theirs.
+            if env.summaryJobs.jobs[ref] == .running { startedBySwitch.remove(ref) }
             guard missing.isEmpty, let summary = env.summaryJobs.start(ref: ref) else {
                 states[ref] = .skipped(missing); return
             }
             switch await summary.value {
             case .finished: break
-            case nil: states[ref] = nil; return            // cancelled by the user or by a provider change
+            // Cancelled: by the user, by turning the switch off, or because the credentials went away.
+            case nil: states[ref] = env.summaryProviderReady ? nil : .skipped([.summaryProvider]); return
             default: states[ref] = .summaryFailed; return
             }
             if env.termination.requested { states[ref] = nil; return }
-            // Read the folder again: the user may have changed or cleared it while the summary ran.
-            guard let folder = env.settings.settings.exportFolder else { states[ref] = .skipped([.exportFolder]); return }
+            // The summary is saved by now, so a folder lost from here on is a failed export, not a skipped run:
+            // the notice must not suggest summarizing (and sending) again.
+            guard let folder = env.settings.settings.exportFolder else { states[ref] = .exportFailed; return }
             do {
                 _ = try await env.store.exportNote(ref, to: URL(fileURLWithPath: folder, isDirectory: true))
                 states[ref] = nil
-            } catch SessionExportError.folderMissing {
-                states[ref] = .skipped([.exportFolder])     // e.g. the volume was unplugged during the summary
             } catch {
                 // `.metadataFailed` means the note was written; only the export history was not. Not a failed export.
                 if case SessionExportError.metadataFailed = error { states[ref] = nil } else { states[ref] = .exportFailed }
