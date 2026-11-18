@@ -230,6 +230,32 @@ private actor FakeSessionTranscriber: Transcriber {
     #expect(await engine.maxActive == 1)
 }
 
+@Test @MainActor func transcriptionReportsOnlySavedTranscriptsWithTheirOrigin() async throws {
+    let root = try transcriptionRoot(); defer { try? FileManager.default.removeItem(at: root) }
+    let store = SessionStore(root: root)
+    let recorded = try await finalizedSession(store), retried = try await finalizedSession(store)
+    let failed = try await finalizedSession(store), cancelled = try await finalizedSession(store)
+    let engine = FakeSessionTranscriber()
+    let service = TranscriptionService(store: store, transcriber: engine, models: FakeModels(), language: { "ja" })
+    var reports: [(UUID, TranscriptionOrigin)] = []
+    service.onTranscribed = { reports.append(($0.id, $1)) }
+
+    service.enqueue(recorded, origin: .newRecording); service.enqueue(retried)
+    await waitFor { jobState(service, recorded) == .done && jobState(service, retried) == .done }
+    #expect(reports.map(\.0) == [recorded.id, retried.id])
+    #expect(reports.map(\.1) == [.newRecording, .manual])
+
+    await engine.configure(failure: .engine("fake failure"))
+    service.enqueue(failed, origin: .newRecording)
+    await waitFor { if case .failed = jobState(service, failed) { return true }; return false }
+    await engine.configure(blocks: true)
+    service.enqueue(cancelled, origin: .newRecording)
+    await waitFor { await engine.gates[4] != nil }
+    service.cancel(cancelled)
+    await waitFor { jobState(service, cancelled) == nil }
+    #expect(reports.count == 2)
+}
+
 @Test @MainActor func transcriptionManualCancelRemovesRunningAndQueuedJobsWithoutFiles() async throws {
     let root = try transcriptionRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let store = SessionStore(root: root), first = try await finalizedSession(store), second = try await finalizedSession(store)

@@ -24,10 +24,12 @@ public struct Settings: Sendable, Equatable, Codable {
     public var summaryConsent = false
     public var summaryProvider = SummaryProvider.apiKey
     public var exportFolder: String?
+    /// After a new recording is transcribed, summarize it and export the note. Turning it on is the consent to send.
+    public var autoSummarizeAndExport = false
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent, summaryProvider, exportFolder
+        case mic, remote, language, modelVariant, screenCaptureRequested, recordingsRoot, calendarIDs, summaryModel, summaryConsent, summaryProvider, exportFolder, autoSummarizeAndExport
     }
 
     public init(from decoder: any Decoder) throws {
@@ -43,6 +45,7 @@ public struct Settings: Sendable, Equatable, Codable {
         summaryConsent = try c.decodeIfPresent(Bool.self, forKey: .summaryConsent) ?? false
         summaryProvider = try c.decodeIfPresent(SummaryProvider.self, forKey: .summaryProvider) ?? .apiKey
         exportFolder = try c.decodeIfPresent(String.self, forKey: .exportFolder)
+        autoSummarizeAndExport = try c.decodeIfPresent(Bool.self, forKey: .autoSummarizeAndExport) ?? false
     }
 }
 

@@ -411,6 +411,7 @@ private actor PipelineTranscriber: Transcriber {
     await rig.audio.resume(); await stop.value
     await waitUntil { service.jobs.first?.state == .done }
     #expect(controller.phase == .idle)
+    #expect(service.jobs.first?.origin == .newRecording)
     #expect(await engine.requests.count == 1)
     let request = try #require(await engine.requests.first)
     #expect(request.audio.me?.resolvingSymlinksInPath().path == ref.folder.audio(.me).resolvingSymlinksInPath().path)

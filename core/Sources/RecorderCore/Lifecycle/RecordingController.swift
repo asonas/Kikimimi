@@ -72,7 +72,7 @@ public final class RecordingController {
         @MainActor public static func transcribing(with service: TranscriptionService) -> Self {
             var hooks = Self()
             hooks.phaseChanged = { service.setRecordingActive($0.isCapturing) }
-            hooks.sessionFinalized = { service.enqueue($0) }
+            hooks.sessionFinalized = { service.enqueue($0, origin: .newRecording) }
             return hooks
         }
     }

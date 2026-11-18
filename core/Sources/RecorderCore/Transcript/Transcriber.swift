@@ -83,10 +83,18 @@ public enum TranscriptionJobState: Sendable, Equatable {
     public enum WaitReason: Sendable, Equatable { case recordingInProgress, modelNotReady }
 }
 
+/// Why a job was enqueued. Only a just-finished recording may start the automatic summary and export; a re-transcribe
+/// must not resend the transcript or replace a summary and note the user already has.
+public enum TranscriptionOrigin: Sendable, Equatable {
+    case newRecording
+    case manual
+}
+
 public struct TranscriptionJob: Sendable, Equatable, Identifiable {
     public var ref: SessionRef
     public var id: UUID { ref.id }
     public var state: TranscriptionJobState
+    public var origin: TranscriptionOrigin = .manual
 }
 
 /// Pure scheduling policy: which job runs next, given the world. One job (= one session) at a time (see design.md:
@@ -120,6 +128,9 @@ public final class TranscriptionService {
     private let language: @MainActor () -> String
     public private(set) var model: ModelStatus = .notInstalled
     public private(set) var jobs: [TranscriptionJob] = []
+    /// Called once per job that saved its transcript and is still in `jobs`. Not called on failure, or when the user
+    /// cancelled the job (it is removed even if the save had already committed).
+    public var onTranscribed: (@MainActor (SessionRef, TranscriptionOrigin) -> Void)?
     private var recordingActive = false
     private var initialized = false
     private var statusTask: Task<Void, Never>?
@@ -145,10 +156,10 @@ public final class TranscriptionService {
     /// (that is the "re-transcribe" button) and replaces segments.json/transcript.md only on success.
     /// Synchronous: when it returns, `jobs` already holds the ref as `.queued` (or `.waiting`), so a caller that wants to
     /// wait (the DEBUG headless runner) observes `jobs` until that ref is `.done` or `.failed`.
-    public func enqueue(_ ref: SessionRef) {
+    public func enqueue(_ ref: SessionRef, origin: TranscriptionOrigin = .manual) {
         if jobs.contains(where: { $0.id == ref.id && ($0.state.isPending || $0.state.isRunning) }) { return }
         jobs.removeAll { $0.id == ref.id }
-        jobs.append(.init(ref: ref, state: .queued))
+        jobs.append(.init(ref: ref, state: .queued, origin: origin))
         schedule()
     }
     public func cancel(_ ref: SessionRef) {
@@ -271,10 +282,15 @@ public final class TranscriptionService {
 
     private func finish(_ ref: SessionRef, token: UUID, state: TranscriptionJobState, remove: Bool = false) {
         guard currentToken == token else { return }
+        var transcribed: TranscriptionOrigin?
         if remove { jobs.removeAll { $0.id == ref.id } }
-        else if let index = jobs.firstIndex(where: { $0.id == ref.id }) { jobs[index].state = state }
+        else if let index = jobs.firstIndex(where: { $0.id == ref.id }) {
+            jobs[index].state = state
+            if state == .done { transcribed = jobs[index].origin }
+        }
         worker = nil; currentID = nil; currentToken = nil; progress = nil
         schedule()
+        if let transcribed { onTranscribed?(ref, transcribed) }
     }
 
 }

@@ -16,6 +16,32 @@ import Testing
     #expect(SettingsStore(defaults: defaults).settings == Settings())
 }
 
+@Test @MainActor func settingsSavedBeforeAutoFollowUpKeepEveryFieldAndStayOff() throws {
+    let suite = "interview-recorder-tests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    var saved = Settings()
+    saved.mic = .init(deviceUID: "uid", deviceName: "Mic", channel: 2)
+    saved.summaryConsent = true
+    saved.exportFolder = "/Users/x/Notes"
+    var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+    json.removeValue(forKey: "autoSummarizeAndExport")
+    defaults.set(try JSONSerialization.data(withJSONObject: json), forKey: "settings.v1")
+    let loaded = SettingsStore(defaults: defaults).settings
+    #expect(loaded == saved)
+    #expect(!loaded.autoSummarizeAndExport)
+}
+
+@Test func autoFollowUpListsEveryMissingRequirementInOrder() {
+    #expect(AutoFollowUpRequirement.missing(modelReady: true, providerReady: true, summaryModel: "gpt", exportFolder: "/n").isEmpty)
+    #expect(AutoFollowUpRequirement.missing(modelReady: false, providerReady: false, summaryModel: " \n", exportFolder: nil)
+            == [.transcriptionModel, .summaryProvider, .summaryModel, .exportFolder])
+    #expect(AutoFollowUpRequirement.missing(modelReady: true, providerReady: false, summaryModel: "gpt", exportFolder: "/n")
+            == [.summaryProvider])
+    #expect(AutoFollowUpRequirement.missing(modelReady: true, providerReady: true, summaryModel: "gpt", exportFolder: nil)
+            == [.exportFolder])
+}
+
 // PermissionProbe's synchronous methods may be called from any thread.
 private final class SetupProbe: PermissionProbe, @unchecked Sendable {
     private let lock = NSLock()
