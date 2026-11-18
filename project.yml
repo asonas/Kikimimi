@@ -55,8 +55,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: as.ason.Kikimimi
         PRODUCT_NAME: Kikimimi
         ASSETCATALOG_COMPILER_APPICON_NAME: Kikimimi
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
         ENABLE_APP_SANDBOX: NO
     info:
       path: App/Info.plist
