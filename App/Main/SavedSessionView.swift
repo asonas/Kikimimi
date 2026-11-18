@@ -58,7 +58,9 @@ struct SavedSessionView: View {
             if let panelDescription { Text(panelDescription).kikimimiText(.body).foregroundStyle(KikimimiColor.secondary) }
             if job == nil || job == .done {
                 Button("文字起こしを開始") { env.transcription.enqueue(session.ref) }
-                    .buttonStyle(KikimimiButtonStyle.secondary).disabled(env.termination.requested)
+                    .buttonStyle(KikimimiButtonStyle.secondary)
+                    // Right after a transcript is saved this page can still show; see SessionInfoSheet for why.
+                    .disabled(env.termination.requested || env.autoFollowUp.isRunning(session.ref))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(32)

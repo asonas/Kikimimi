@@ -13,33 +13,40 @@ enum SummaryJob: Sendable, Equatable {
 final class SummaryJobs {
     private(set) var jobs: [SessionRef: SummaryJob] = [:]
     @ObservationIgnored private weak var environment: AppEnvironment?
-    @ObservationIgnored private var operations: [SessionRef: (id: UUID, task: Task<Void, Never>)] = [:]
+    @ObservationIgnored private var operations: [SessionRef: (id: UUID, task: Task<SummaryJob?, Never>)] = [:]
 
     init(environment: AppEnvironment) { self.environment = environment }
 
-    func start(ref: SessionRef) {
-        guard operations[ref] == nil, let env = environment else { return }
+    /// Returns the task of this session's summary, including one that was already running. Its value is that run's own
+    /// result: `.finished`, `.failed`, or nil when it was cancelled. `jobs[ref]` may already belong to a later run.
+    @discardableResult
+    func start(ref: SessionRef) -> Task<SummaryJob?, Never>? {
+        if let running = operations[ref] { return running.task }
+        guard let env = environment else { return nil }
         let id = UUID()
         let model = env.settings.settings.summaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let source = env.summaryTokenSource
         jobs[ref] = .running
-        let task = Task {
+        let task = Task { () -> SummaryJob? in
+            var outcome: SummaryJob?
             do {
                 let transcript = try String(contentsOf: ref.folder.transcript, encoding: .utf8)
                 let result = try await ResponsesClient().summarize(transcript: transcript, model: model, tokenSource: source)
                 try Task.checkCancellation()
                 try await env.store.saveSummary(ref, markdown: result)
-                if operations[ref]?.id == id { jobs[ref] = .finished(Date()) }
+                outcome = .finished(Date())
             } catch {
-                if operations[ref]?.id == id {
-                    jobs[ref] = error is CancellationError || Task.isCancelled ? nil : .failed(error.localizedDescription)
-                }
+                outcome = error is CancellationError || Task.isCancelled ? nil : .failed(error.localizedDescription)
             }
-            // An old cancelled task must not clear a replacement job for the same session.
-            if operations[ref]?.id == id { operations[ref] = nil }
-            await env.chatGPT.refresh()
+            // `cancel` removed this run, maybe after the save had committed: it still counts as cancelled.
+            // An old cancelled task must not touch a replacement job for the same session either.
+            if operations[ref]?.id == id { jobs[ref] = outcome; operations[ref] = nil } else { outcome = nil }
+            // Not awaited: a slow keychain read must not hold back the result the automatic export waits for.
+            Task { await env.chatGPT.refresh() }
+            return outcome
         }
         operations[ref] = (id, task)
+        return task
     }
 
     func cancel(ref: SessionRef) {

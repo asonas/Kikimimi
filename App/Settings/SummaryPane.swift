@@ -18,7 +18,9 @@ struct SummaryPane: View {
             if usesChatGPT { chatGPTSection } else { apiKeySection }
             SettingsSection("要約に使うモデル") { SummaryModelPicker(env: env) }
             VStack(alignment: .leading, spacing: 0) {
-                Text("「要約を作成」を押したときだけ、文字起こしを送信します。").kikimimiText(.body)
+                Text(env.settings.settings.autoSummarizeAndExport
+                     ? "新しい録音の文字起こしが終わると、自動で送信します。"
+                     : "「要約を作成」を押したときだけ、文字起こしを送信します。").kikimimiText(.body)
                 Text("音声ファイルは送信しません。").kikimimiText(.body)
             }.foregroundStyle(KikimimiColor.secondary)
             Text(usesChatGPT ? "ChatGPTの利用上限は、ほかのアプリと共有します。" : "OpenAI APIの利用料金がかかります。")

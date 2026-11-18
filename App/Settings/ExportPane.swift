@@ -1,8 +1,10 @@
 import AppKit
+import RecorderCore
 import SwiftUI
 
 struct ExportPane: View {
     let env: AppEnvironment
+    @State private var confirmingAuto = false
     var body: some View {
         SettingsPage("書き出し", description: "録音ごとに、文字起こしと要約を1つのノートにまとめます。") {
             SettingsSection("ノートの保存先") {
@@ -14,6 +16,17 @@ struct ExportPane: View {
                     Button("Finderで表示") {
                         if let path = env.settings.settings.exportFolder { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path, isDirectory: true)]) }
                     }.disabled(env.settings.settings.exportFolder == nil)
+                }
+            }
+            SettingsSection("自動で処理") {
+                SettingsRow("文字起こしが終わったら、要約してノートを書き出す", description: autoDescription) {
+                    Toggle(isOn: Binding(get: { autoEnabled }, set: { on in
+                        if on { confirmingAuto = true } else { env.settings.settings.autoSummarizeAndExport = false }
+                    })) { Text(autoEnabled ? "オン" : "オフ") }
+                    .labelsHidden().toggleStyle(.switch).tint(KikimimiColor.ink).frame(minHeight: 40).fixedSize()
+                    // Turning it off stays possible after a setting was undone; only turning it on needs every setting.
+                    .disabled(!autoEnabled && !missing.isEmpty)
+                    .accessibilityLabel("文字起こしが終わったら、要約してノートを書き出す")
                 }
             }
             VStack(alignment: .leading, spacing: 24) {
@@ -32,6 +45,35 @@ struct ExportPane: View {
                 Button("保存先の設定を解除") { env.settings.settings.exportFolder = nil }.buttonStyle(KikimimiButtonStyle.text)
             }
         }
+        .sheet(isPresented: $confirmingAuto) {
+            MainSheet {
+                Text("文字起こしが終わるたびに送信します").kikimimiText(.heading)
+                Text("新しい録音の文字起こしが終わると、設定しているモデルプロバイダーへ送信して要約し、ノートに書き出します。\n音声ファイルは送信しません。")
+                    .kikimimiText(.body)
+                Text("あとから設定でオフにできます。").kikimimiText(.small).foregroundStyle(KikimimiColor.secondary)
+                HStack {
+                    Button("キャンセル") { confirmingAuto = false }.buttonStyle(KikimimiButtonStyle.secondary)
+                    Spacer()
+                    Button("オンにする") {
+                        env.settings.settings.summaryConsent = true
+                        env.settings.settings.autoSummarizeAndExport = true
+                        confirmingAuto = false
+                    }
+                    .buttonStyle(KikimimiButtonStyle.primary).keyboardShortcut(.defaultAction).disabled(!missing.isEmpty)
+                }
+            }
+        }
+        .task { env.summaryCredentials.refresh(); await env.chatGPT.refresh() }
+    }
+    private var autoEnabled: Bool { env.settings.settings.autoSummarizeAndExport }
+    private var missing: [AutoFollowUpRequirement] { env.autoFollowUp.missingRequirements }
+    private var autoDescription: String {
+        guard !missing.isEmpty else {
+            return autoEnabled ? "新しい録音が対象です。文字起こしを、設定しているモデルプロバイダーに送信します。"
+                : "オンにすると、新しい録音の文字起こしを、設定しているモデルプロバイダーに送信します。"
+        }
+        let steps = missing.map(\.instruction).joined(separator: "\n")
+        return (autoEnabled ? "次の設定が済むまで、自動では行いません。\n" : "次の設定が済むと使えます。\n") + steps
     }
     private func chooseFolder() {
         let panel = NSOpenPanel()

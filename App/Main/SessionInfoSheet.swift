@@ -22,7 +22,9 @@ struct SessionInfoSheet: View {
             HStack(spacing: 12) {
                 Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([session.ref.folder.url]) }
                 Button("文字起こしをやり直す") { env.transcription.enqueue(session.ref); dismiss() }
-                    .disabled((session.state != .readyToTranscribe && session.state != .transcribed) || job?.isBusy == true || env.termination.requested)
+                    // A new transcript arriving while the automatic run summarizes the old one would mix the two in one note.
+                    .disabled((session.state != .readyToTranscribe && session.state != .transcribed) || job?.isBusy == true
+                              || env.termination.requested || env.autoFollowUp.isRunning(session.ref))
             }
             .buttonStyle(KikimimiButtonStyle.secondary)
             Button("閉じる") { dismiss() }.buttonStyle(KikimimiButtonStyle.text)

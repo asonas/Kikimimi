@@ -35,7 +35,8 @@ struct SessionDetailView: View {
                 case .summary: SessionSummaryView(env: env, ref: session.ref, transcriptAvailable: state.markdownAvailable)
                 }
                 exportStatus
-                if exportFailed {
+                autoFollowUpNotice
+                if exportFailed || autoState == .exportFailed {
                     Notice(tone: .danger, title: "ノートを書き出せませんでした",
                            action: .init(label: "保存先を確認", perform: showExportSettings))
                 }
@@ -99,7 +100,7 @@ struct SessionDetailView: View {
             }
             if env.settings.settings.exportFolder != nil {
                 Button("ノートを書き出す", action: requestExport).buttonStyle(KikimimiButtonStyle.primary)
-                    .disabled(!state.segmentsAvailable || isExporting || env.termination.requested)
+                    .disabled(!state.segmentsAvailable || isExporting || env.termination.requested || env.autoFollowUp.isRunning(session.ref))
             } else {
                 Button("書き出し先を設定") { openSettings() }.buttonStyle(KikimimiButtonStyle.secondary)
             }
@@ -128,8 +129,24 @@ struct SessionDetailView: View {
         if state.exportOutdated {
             Notice(tone: .warning, title: "書き出したノートより新しい内容があります",
                    action: .init(label: "もう一度書き出す",
-                                 isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !isExporting && !env.termination.requested,
+                                 isEnabled: env.settings.settings.exportFolder != nil && state.segmentsAvailable && !isExporting
+                                     && !env.termination.requested && !env.autoFollowUp.isRunning(session.ref),
                                  perform: requestExport))
+        }
+    }
+    private var autoState: AutoFollowUpState? { env.autoFollowUp.states[session.ref] }
+    @ViewBuilder private var autoFollowUpNotice: some View {
+        switch autoState {
+        case .summaryFailed:
+            Notice(tone: .danger, title: "要約できなかったため、ノートを書き出していません",
+                   message: "もう一度試すと、要約してからノートを書き出します。",
+                   action: .init(label: "もう一度試す", isEnabled: !env.termination.requested) { env.autoFollowUp.retry(session.ref) })
+        case .skipped(let missing):
+            Notice(tone: .warning, title: "自動の要約と書き出しをしませんでした",
+                   message: "\(missing.map(\.shortLabel).joined(separator: "、"))が設定されていませんでした。設定を済ませてから、要約とノートの書き出しをしてください。",
+                   action: .init(label: "設定を開く") { showSettings(missing.first?.settingsPane ?? .export) })
+        case .running, .exportFailed, nil:
+            EmptyView()
         }
     }
     private var isExporting: Bool { if case .exporting = exportStep { true } else { false } }
@@ -139,11 +156,14 @@ struct SessionDetailView: View {
     }
     private func exportNote(to destination: URL) {
         guard case .confirming(let confirmed) = exportStep, confirmed == destination else { return }
+        // The automatic run may have started after the sheet opened; it writes the same note.
+        if env.autoFollowUp.isRunning(session.ref) { exportStep = nil; return }
         exportStep = .exporting(destination); actionError = nil; exportFailed = false
         Task {
             do {
                 let exported = try await env.store.exportNote(session.ref, to: destination)
                 await state.refresh(store: env.store)
+                env.autoFollowUp.clear(session.ref)
                 exportStep = .done(exported)
             } catch {
                 exportStep = nil
@@ -152,8 +172,9 @@ struct SessionDetailView: View {
             }
         }
     }
-    private func showExportSettings() {
-        UserDefaults.standard.set(SettingsPane.export.rawValue, forKey: "settings.selectedPane")
+    private func showExportSettings() { showSettings(.export) }
+    private func showSettings(_ pane: SettingsPane) {
+        UserDefaults.standard.set(pane.rawValue, forKey: "settings.selectedPane")
         openSettings()
     }
     private func copyMarkdown() {

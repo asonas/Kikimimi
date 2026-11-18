@@ -31,6 +31,7 @@ final class AppEnvironment {
     let chatGPT = ChatGPTSignIn()
     let summaryModels = SummaryModelLists()
     @ObservationIgnored lazy var summaryJobs = SummaryJobs(environment: self)
+    @ObservationIgnored lazy var autoFollowUp = AutoFollowUp(environment: self)
 
     func setSummaryProvider(_ provider: SummaryProvider) {
         guard settings.settings.summaryProvider != provider else { return }
@@ -126,6 +127,7 @@ final class AppEnvironment {
         self.recorder = recorder; self.transcription = transcription; self.launched = launched
         self.modelVariant = modelVariant; self.modelVariantOverridden = modelVariantOverridden
         self.recovery = recovery
+        transcription.onTranscribed = { [weak self] ref, origin in self?.autoFollowUp.transcribed(ref, origin: origin) }
         summaryCredentials.onUnavailable = { [weak self] in
             guard let self, self.settings.settings.summaryProvider == .apiKey else { return }
             self.summaryJobs.cancelAll()
