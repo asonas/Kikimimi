@@ -1,3 +1,4 @@
+hdiutil detach "$mount_dir" || hdiutil detach "$mount_dir" -force
 # <repo>/mise.toml  (layout follows YoruMimizuku's mise.toml: [tools], [env], one task per verb, build depends on generate)
 # Extra arguments are appended to the LAST line of a task's run script (checked with mise 2026.11.2: `$@` is empty inside
 # the script, and a leading `--` is consumed by mise). So the line that should receive them is always the last one:
@@ -141,8 +142,10 @@ command cp -R "$app" "$staging/"
 ln -s /Applications "$staging/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$staging" -fs HFS+ -format UDRW -ov "$rw_dmg"
 # Icon layout is best-effort: without a Finder session the DMG is still valid, only unstyled.
-mount_dir="$(mktemp -d)"
-hdiutil attach "$rw_dmg" -mountpoint "$mount_dir" -nobrowse -noautoopen
+# The image has to be mounted under /Volumes: Finder does not address a volume mounted anywhere else as a disk.
+mount_dir="/Volumes/$APP_NAME"
+[ ! -e "$mount_dir" ] || { echo "Eject $mount_dir first: the layout script finds the disk by its name." >&2; exit 1; }
+hdiutil attach "$rw_dmg" -nobrowse -noautoopen
 osascript scripts/dmg-layout.applescript "$APP_NAME" "$APP_NAME.app" || true
 sync
 hdiutil detach "$mount_dir" || hdiutil detach "$mount_dir" -force
