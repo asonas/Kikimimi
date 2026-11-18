@@ -3,3 +3,5 @@ build/
 recordings/
 .swiftpm/
 *.xcodeproj/
+.claude/worktrees/
+.dev/
