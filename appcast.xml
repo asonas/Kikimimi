@@ -3,12 +3,12 @@
     <channel>
         <title>Kikimimi</title>
         <item>
-            <title>0.1.0</title>
-            <pubDate>Wed, 18 Nov 2026 20:36:35 +0900</pubDate>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <title>0.2.0</title>
+            <pubDate>Wed, 18 Nov 2026 22:47:50 +0900</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/asonas/Kikimimi/releases/download/v0.1.0/Kikimimi-0.1.0.zip" length="6233477" type="application/octet-stream" sparkle:edSignature="jgt4RR8uV9stJ5tkaWtSbdneVORyXOYbFp95MsWAxHflmpfVe/tHrg6SwLG30m5t9xROCu+iMB/4d7LP/H5FAw=="/>
+            <enclosure url="https://github.com/asonas/Kikimimi/releases/download/v0.2.0/Kikimimi-0.2.0.zip" length="6286594" type="application/octet-stream" sparkle:edSignature="VTZp3e8y2J6bHE5FksQNlgrLDLVV2JzYr5dFzpsE6I7ecrLnNgPDE31SwKOI7MV1nutvNamCtOkLzWXeXZKHBg=="/>
         </item>
     </channel>
 </rss>
